@@ -6,7 +6,6 @@ import "../src/malicious_contract/ReentrancyAttacker.sol";
 import "../src/malicious_contract/Sinkhole.sol";
 
 contract DeployMalicious is Script {
-
     function run() public {
         // Optional: total wei forwarded to both contracts (split inside script)
         uint256 valueWei = vm.envUint("DEPLOY_VALUE_WEI"); // set to 0 if not needed
