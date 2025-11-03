@@ -1,0 +1,55 @@
+{
+  "rpc": "https://eth-sepolia.g.alchemy.com/v2/F8X3H2cE64aIbdybBl01B",
+  "checks": {
+    "Vulnerable": {
+      "address": "0x01aA12e58defD72CA2b8F5708d314b74EBB5F197",
+      "deployed": true,
+      "code_length": 9876,
+      "selector_presence": {
+        "proposeTransaction(address,uint256,bytes)": true,
+        "confirmTransaction(uint256)": true,
+        "executeTransaction(uint256)": true,
+        "batchExecute(uint256[] calldata)": false,
+        "proposalCount()": true
+      },
+      "code_hex_prefix": "6080604052600436101561001a575b3615610018575f80fd5b005b5f3560e01c8062a0d28f14610158578063013cf08b14610153578063025e7c271461014e578063173825d9146101495780632f54bf6e146101445780633380c0d81461013f57806342"
+    },
+    "Secure": {
+      "address": "0xEbb47ce2855267408188A07CDd909CA6558759b1",
+      "deployed": true,
+      "code_length": 13194,
+      "selector_presence": {
+        "proposeTransaction(address,uint256,bytes)": true,
+        "confirmTransaction(uint256)": true,
+        "executeTransaction(uint256)": true,
+        "batchExecute(uint256[] calldata)": false,
+        "proposalCount()": true
+      },
+      "code_hex_prefix": "60806040526004361015610022575b3615610018575f80fd5b6100206118e9565b005b5f3560e01c8062a0d28f1461019b578063013cf08b1461013c5780630993d763146101965780632bbca157146101915780632f54bf6e1461018c5780633380c0d8"
+    },
+    "ReentrancyAttacker": {
+      "address": "0xe5fCF1F6c237789011a3C1Ac9Cb3879EAc3e2b59",
+      "deployed": true,
+      "code_length": 1310,
+      "selector_presence": {
+        "setProposalId(uint256)": true,
+        "withdraw(address)": true,
+        "receive()": null
+      },
+      "code_hex_prefix": "60808060405260043610156100ee575b50361561001a575f80fd5b5f60035460ff811615610063575b7f96ecf8026aec664d669dc43d36e6522dba02a60278079154949693632e5d8bce6060836040519033825234602083015215156040820152a1005b"
+    },
+    "Sinkhole": {
+      "address": "0xA0BA54a781E1930A633Ff048f77c26762bbabb61",
+      "deployed": true,
+      "code_length": 1048,
+      "selector_presence": {
+        "implode(address)": true,
+        "implodeBurn()": true,
+        "withdrawIfUnlocked(address)": false,
+        "unlock()": false,
+        "balance()": false
+      },
+      "code_hex_prefix": "6080604052600436101561005d575b3615610018575f80fd5b5f805460ff60a01b1916600160a01b179055604080513381523460208201527f9f1ec8c880f76798e7b793325d625e9b60e4082a553c98f42b6cda368dd600089190a1005b5f3560e01c80"
+    }
+  }
+}
