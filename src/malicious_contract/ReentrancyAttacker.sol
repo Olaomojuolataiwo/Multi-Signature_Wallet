@@ -37,6 +37,7 @@ contract ReentrancyAttacker {
             target.executeTransaction(proposalId);
         }
         emit Received(msg.sender, msg.value, attempted);
+        reentered = false;
     }
 
     // helper to withdraw funds after test

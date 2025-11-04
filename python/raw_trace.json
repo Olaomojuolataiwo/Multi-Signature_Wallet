@@ -1,0 +1,8 @@
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "error": {
+    "code": -32603,
+    "message": "Fork Error: Transport(HttpError(HttpError { status: 400, body: \"{\\\"jsonrpc\\\":\\\"2.0\\\",\\\"id\\\":43,\\\"error\\\":{\\\"code\\\":-32600,\\\"message\\\":\\\"debug_traceTransaction is not available on the Free tier - upgrade to Pay As You Go, or Enterprise for access.\\\"}}\" }))"
+  }
+}

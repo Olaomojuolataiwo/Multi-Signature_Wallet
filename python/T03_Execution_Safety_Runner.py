@@ -23,8 +23,8 @@ OWNER_KEYS_RAW = os.getenv('OWNER_PRIVATE_KEYS', '')
 ATTACKER_KEY = os.getenv('ATTACKER_PRIVATE_KEY')
 REENTRANCY_ATTACKER_ADDRESS = os.getenv('REENTRANCY_ATTACKER_ADDRESS')
 SINKHOLE_ADDRESS = os.getenv('SINKHOLE_ADDRESS')
-TARGET_X_ETH = Decimal(os.getenv('TARGET_X_ETH', '0.05'))
-GAS_PRICE_GWEI = int(os.getenv('GAS_PRICE_GWEI', '20'))
+TARGET_X_ETH = Decimal(os.getenv('TARGET_X_ETH', '0.01'))
+GAS_PRICE = int(os.getenv('GAS_PRICE', '20'))
 ARTIFACT_DIR = os.getenv('ARTIFACT_DIR', './artifacts/T-03')
 DEPLOYER_ADDRESS = os.getenv('DEPLOYER_ADDRESS')
 DEPLOYER_PRIVATE_KEY = os.getenv('DEPLOYER_PRIVATE_KEY')
@@ -132,29 +132,31 @@ def build_and_send(account: Account, to, data=b'', value=0, gas=2_000_000):
         'nonce': w3.eth.get_transaction_count(account.address),
         'chainId': chain_id
     }
-    return send_signed_tx(account, tx)
+    return send_tx_signed(account, tx)
 
 def call_propose(contract, owner: Account, to_addr, value_eth: Decimal):
     fn = contract.functions.proposeTransaction(to_addr, to_wei_eth(value_eth), b'')
     tx = fn.build_transaction({'from': owner.address, 'nonce': w3.eth.get_transaction_count(owner.address), 'gas': 400_000, 'gasPrice': GAS_PRICE, 'chainId': chain_id})
-    return send_signed_tx(owner, tx)
+    return send_tx_signed(owner, tx)
 
 def call_confirm(contract, owner: Account, pid):
     fn = contract.functions.confirmTransaction(pid)
     tx = fn.build_transaction({'from': owner.address, 'nonce': w3.eth.get_transaction_count(owner.address), 'gas': 200_000, 'gasPrice': GAS_PRICE, 'chainId': chain_id})
-    return send_signed_tx(owner, tx)
+    return send_tx_signed(owner, tx)
 
 def call_execute(contract, owner: Account, pid, gas=2_000_000):
     fn = contract.functions.executeTransaction(pid)
     tx = fn.build_transaction({'from': owner.address, 'nonce': w3.eth.get_transaction_count(owner.address), 'gas': gas, 'gasPrice': GAS_PRICE, 'chainId': chain_id})
-    return send_signed_tx(owner, tx)
+    return send_tx_signed(owner, tx)
 
 def call_batch(contract, owner: Account, ids):
     fn = contract.functions.batchExecute(ids)
     tx = fn.build_transaction({'from': owner.address, 'nonce': w3.eth.get_transaction_count(owner.address), 'gas': 6_000_000, 'gasPrice': GAS_PRICE, 'chainId': chain_id})
-    return send_signed_tx(owner, tx)
+    return send_tx_signed(owner, tx)
 
-# Logging helpers
+def get_owner_account(i):
+    return owner_accounts[i]
+
 def log_step(name):
     print('\n' + '='*8 + f' {name} ' + '='*8)
 
@@ -164,23 +166,55 @@ def dump_tx_artifact(prefix, txh, receipt):
     trace = fetch_trace(txh)
     save_json(trace, f'{prefix}_{txh}_trace.json')
 
+def call_withdraw_attacker(attacker_contract, owner: Account, to_addr):
+    """Calls the ReentrancyAttacker.withdraw(address to) function."""
+    fn = attacker_contract.functions.withdraw(to_addr)
+    tx = fn.build_transaction({
+        'from': owner.address, 
+        'nonce': w3.eth.get_transaction_count(owner.address), 
+        'gas': 150000, # Sufficient gas
+        'gasPrice': GAS_PRICE, 
+        'chainId': chain_id
+    })
+    return send_tx_signed(owner, tx)
+
+def get_proposal_status(multisig_contract, pid):
+    """Fetches the executed status of a proposal (index 5) from getProposal."""
+    proposal_data = multisig_contract.functions.getProposal(pid).call()
+    return proposal_data[executed_index]
+
+def call_implode_sinkhole(sinkhole_contract, owner: Account, to_addr):
+    """Calls the Sinkhole.implode(address to) function."""
+    fn = sinkhole_contract.functions.implode(to_addr)
+    tx = fn.build_transaction({
+        'from': owner.address, 
+        'nonce': w3.eth.get_transaction_count(owner.address), 
+        'gas': 200000,
+        'gasPrice': GAS_PRICE, 
+        'chainId': chain_id
+    })
+    return send_tx_signed(owner, tx)
+
 def fund_wallets():
-    FUND_AMOUNT = w3.to_wei(0.01, "ether")
+    FUND_AMOUNT = w3.to_wei(0.02, "ether")
     print(f"\nFunding multisig wallets from deployer ({DEPLOYER_ADDRESS})...")
+    current_nonce = w3.eth.get_transaction_count(DEPLOYER_ADDRESS)
 
     for target in [VULNERABLE_ADDRESS, SECURE_ADDRESS]:
         tx = {
             "from": DEPLOYER_ADDRESS,
             "to": target,
             "value": FUND_AMOUNT,
-            "nonce": w3.eth.get_transaction_count(DEPLOYER_ADDRESS),
-            "gas": 22000,
+            "nonce": current_nonce,
+            "gas": 122000,
             "gasPrice": w3.to_wei("3", "gwei"),
         }
         signed = w3.eth.account.sign_transaction(tx, private_key=DEPLOYER_PRIVATE_KEY)
         txh = w3.eth.send_raw_transaction(signed.raw_transaction)
         rec = w3.eth.wait_for_transaction_receipt(txh)
-        print(f"  -> Sent 0.01 ETH to {target[:10]}... | tx: {txh.hex()} | gasUsed: {rec.gasUsed}")
+        print(f"  -> Sent 0.02 ETH to {target[:10]}... | tx: {txh.hex()} | gasUsed: {rec.gasUsed}")
+
+        current_nonce += 1
 
     # Post-funding check
     vuln_bal = w3.eth.get_balance(VULNERABLE_ADDRESS)
@@ -190,7 +224,7 @@ def fund_wallets():
     print(f"  Secure:     {w3.from_wei(sec_bal, 'ether')} ETH")
 
 # Run before tests
-fund_wallets()
+#fund_wallets()
 
 # Prechecks
 log_step('PRE-CHECKS')
@@ -223,7 +257,6 @@ for oi in owners_info:
 # Results collector
 summary = {'reentrancy': {}, 'unchecked_external': {}, 'batch': {}}
 
-
 # ---------------------------------
 
 #        REENTRANCY TEST
@@ -232,193 +265,302 @@ summary = {'reentrancy': {}, 'unchecked_external': {}, 'batch': {}}
 
 # ---------------------------------
 
-#        VULNERABLE FLOW
+#   ATTACK EXECUTION (VULNERABLE)
 
 # ---------------------------------
 
-log_step('REENTRANCY TEST (Vulnerable)')
+#log_step('REENTRANCY TEST (Vulnerable)')
 
 # --- 1) Propose tx sending TARGET_X_ETH to the attacker contract ---
-print('Proposing transaction (Vulnerable -> attacker)')
-txh_prop, rec_prop = call_propose(vuln, owners[0], REENTRANCY_ATTACKER_ADDRESS, TARGET_X_ETH)
-print('Propose tx:', txh_prop)
-dump_tx_artifact('vul_reentrancy_propose', txh_prop, rec_prop)
+#print('Proposing transaction (Vulnerable -> attacker)')
+#txh_prop, rec_prop = call_propose(vuln, owner_accounts[0], REENTRANCY_ATTACKER_ADDRESS, TARGET_X_ETH)
+#print('Propose tx:', txh_prop)
+#dump_tx_artifact('vul_reentrancy_propose', txh_prop, rec_prop)
 
 # --- 2) Derive the proposal id (proposalCount - 1) ---
-try:
-    pc = vuln.functions.proposalCount().call()
-    pid = pc - 1
-except Exception:
-    pid = 0
-print('Derived proposal id:', pid)
+#try:
+#    pc = vuln.functions.proposalCount().call()
+#    pid = pc - 1
+#except Exception:
+#    pid = 0
+#print('Derived proposal id:', pid)
 
 # --- 3) IMPORTANT: set the proposal id on the attacker BEFORE execution ---
-print('Setting proposalId on attacker contract (must be done before execute)')
-tx_set = re_att.functions.setProposalId(pid).build_transaction({
-    'from': attacker_account.address,
-    'nonce': w3.eth.get_transaction_count(attacker_account.address),
-    'gas': 120000,
-    'gasPrice': GAS_PRICE,
-    'chainId': chain_id
-})
-txh_set, rec_set = send_signed_tx(attacker_account, tx_set)
-print('Set proposalId tx:', txh_set)
-dump_tx_artifact('attacker_setProposalId', txh_set, rec_set)
+#print('Setting proposalId on attacker contract (must be done before execute)')
+#tx_set = re_att.functions.setProposalId(pid).build_transaction({
+#    'from': attacker_account.address,
+#    'nonce': w3.eth.get_transaction_count(attacker_account.address),
+#    'gas': 120000,
+#    'gasPrice': GAS_PRICE,
+#    'chainId': chain_id
+#})
+#txh_set, rec_set = send_tx_signed(attacker_account, tx_set)
+#print('Set proposalId tx:', txh_set)
+#dump_tx_artifact('attacker_setProposalId', txh_set, rec_set)
 
 # --- 4) Confirm the proposal with the other owners so it becomes executable ---
-print('Confirming transaction with required owners')
-for i, acct in enumerate(owners[1:3], start=1):
-    txh_c, rec_c = call_confirm(vuln, acct, pid)
-    print(f'Confirm tx ({i}):', txh_c)
-    dump_tx_artifact(f'vul_reentrancy_confirm_{i}', txh_c, rec_c)
+#print('Confirming transaction with required owners')
+#for i, acct in enumerate(owners[1:3], start=1):
+#    txh_c, rec_c = call_confirm(vuln, get_owner_account(i), pid)
+#    print(f'Confirm tx ({i}):', txh_c)
+#    dump_tx_artifact(f'vul_reentrancy_confirm_{i}', txh_c, rec_c)
 
 # --- 5) Record balances BEFORE execute (exact wei) for evidence ---
-vuln_before = w3.eth.get_balance(VULNERABLE_ADDRESS)
-att_before = w3.eth.get_balance(REENTRANCY_ATTACKER_ADDRESS)
-print(f'Balances before execute: Vulnerable={eth(vuln_before)} ETH, Attacker={eth(att_before)} ETH')
+#vuln_before = w3.eth.get_balance(VULNERABLE_ADDRESS)
+#att_before = w3.eth.get_balance(REENTRANCY_ATTACKER_ADDRESS)
+#print(f'Balances before execute: Vulnerable={eth(vuln_before)} ETH, Attacker={eth(att_before)} ETH')
 
 # --- 6) Execute the proposal (this will call the attacker and potentially re-enter) ---
-print('Executing proposal (this triggers the attack if vulnerable)')
-txh_exec, rec_exec = call_execute(vuln, owners[0], pid, gas=2_500_000)
-print('Execute tx:', txh_exec)
-dump_tx_artifact('vul_reentrancy_execute', txh_exec, rec_exec)
+#print('Executing proposal (this triggers the attack if vulnerable)')
+#txh_exec, rec_exec = call_execute(vuln, owner_accounts[0], pid, gas=2_500_000)
+#print('Execute tx:', txh_exec)
+#dump_tx_artifact('vul_reentrancy_execute', txh_exec, rec_exec)
 
 # --- 7) Record balances AFTER execute (exact wei) ---
-vuln_after = w3.eth.get_balance(VULNERABLE_ADDRESS)
-att_after = w3.eth.get_balance(REENTRANCY_ATTACKER_ADDRESS)
-print(f'Balances after execute: Vulnerable={eth(vuln_after)} ETH, Attacker={eth(att_after)} ETH')
+#vuln_after = w3.eth.get_balance(VULNERABLE_ADDRESS)
+#att_after = w3.eth.get_balance(REENTRANCY_ATTACKER_ADDRESS)
+#print(f'Balances after execute: Vulnerable={eth(vuln_after)} ETH, Attacker={eth(att_after)} ETH')
 
 # --- 8) Compute deltas in wei (safe integer arithmetic) ---
-attacker_delta_wei = int(att_after - att_before)
-vulnerable_delta_wei = int(vuln_before - vuln_after)
+#attacker_delta_wei = int(att_after - att_before)
+#vulnerable_delta_wei = int(vuln_before - vuln_after)
 
-print(f'  Attacker delta: {attacker_delta_wei} wei ({eth(attacker_delta_wei)} ETH)')
-print(f'  Vulnerable delta: {vulnerable_delta_wei} wei ({eth(vulnerable_delta_wei)} ETH)')
+#print(f'  Attacker delta: {attacker_delta_wei} wei ({eth(attacker_delta_wei)} ETH)')
+#print(f'  Vulnerable delta: {vulnerable_delta_wei} wei ({eth(vulnerable_delta_wei)} ETH)')
 
 # --- 9) Success criteria (convert TARGET_X_ETH to wei for comparison) ---
-target_wei = to_wei_eth(TARGET_X_ETH)
+#target_wei = to_wei_eth(TARGET_X_ETH)
 
 # Double-dip success: attacker got >= 2 * target
-if attacker_delta_wei > target_wei:
-    print('RESULT: Expected Scenario Outcome — attacker received >= 2 * TARGET_X_ETH (double-dip).')
-    summary['reentrancy']['result'] = 'SUCCESS_DOUBLE_DIP'
+#if attacker_delta_wei > target_wei:
+#    print('RESULT: Expected Scenario Outcome — attacker received >= 2 * TARGET_X_ETH (double-dip).')
+#    summary['reentrancy']['result'] = 'SUCCESS_DOUBLE_DIP'
 # Single transfer: attacker got exactly target or roughly that (allow small gas-related noise)
-elif attacker_delta_wei == target_wei:
-    print('RESULT: Unexpectd Scenario Outcome — attacker received ~TARGET_X_ETH (no double-dip).')
-    summary['reentrancy']['result'] = 'SINGLE_TRANSFER_OR_PARTIAL'
-else:
-    print('RESULT: Unexpected Scenario FAILURE — attacker received no (or negligible) funds.')
-    summary['reentrancy']['result'] = 'NO_FUNDS'
+#elif attacker_delta_wei == target_wei:
+#    print('RESULT: Unexpectd Scenario Outcome — attacker received ~TARGET_X_ETH (no double-dip).')
+#    summary['reentrancy']['result'] = 'SINGLE_TRANSFER_OR_PARTIAL'
+#else:
+#    print('RESULT: Unexpected Scenario FAILURE — attacker received no (or negligible) funds.')
+#    summary['reentrancy']['result'] = 'NO_FUNDS'
 
 # store details for artifacts
-summary['reentrancy'].update({
-    'vulnerable_before_wei': int(vuln_before),
-    'vulnerable_after_wei': int(vuln_after),
-    'attacker_before_wei': int(att_before),
-    'attacker_after_wei': int(att_after),
-    'attacker_delta_wei': attacker_delta_wei,
-    'vulnerable_delta_wei': vulnerable_delta_wei,
-    'execute_tx': txh_exec,
-    'propose_tx': txh_prop,
-    'setProposalId_tx': txh_set,
-    'confirm_txs': []  # optionally append the confirm txs if you want them tracked
-})
+#summary['reentrancy'].update({
+#    'vulnerable_before_wei': int(vuln_before),
+#    'vulnerable_after_wei': int(vuln_after),
+#    'attacker_before_wei': int(att_before),
+#    'attacker_after_wei': int(att_after),
+#    'attacker_delta_wei': attacker_delta_wei,
+#    'vulnerable_delta_wei': vulnerable_delta_wei,
+#    'execute_tx': txh_exec,
+#    'propose_tx': txh_prop,
+#    'setProposalId_tx': txh_set,
+#    'confirm_txs': []  # optionally append the confirm txs if you want them tracked
+#})
 
 # (optional) Collect confirms into summary['reentrancy']['confirm_txs'] if desired
 
+# Reset Reentrancy Contract State to allow further attacks using withdraw function
+#log_step('RESET ATTACKER STATE')
+#print('Withdrawing funds from attacker contract (resets reentered=false)')
+
+#txh_withdraw, rec_withdraw = call_withdraw_attacker(re_att, attacker_account, attacker_account.address)
+#print('Withdraw tx:', txh_withdraw)
+#dump_tx_artifact('attacker_withdraw_reset', txh_withdraw, rec_withdraw)
+
+
 # ---------------------------------
 
-#        SECURE FLOW
+#   MITIGATION EXECUTION (SECURE)
 
 # ---------------------------------
 
-# ---------- REENTRANCY TEST (Secure) ----------
+# --- REENTRANCY TEST (Secure) ----
 
-log_step('REENTRANCY TEST (Secure)')
+#log_step('REENTRANCY TEST (Secure)')
+
+# --- 1) Propose tx sending TARGET_X_ETH to the attacker contract (on Secure wallet) ---
+#print('Proposing transaction (Secure -> attacker)')
+#txh_prop_s, rec_prop_s = call_propose(secure, owner_accounts[0], REENTRANCY_ATTACKER_ADDRESS, TARGET_X_ETH)
+#print('Propose tx:', txh_prop_s)
+#dump_tx_artifact('sec_reentrancy_propose', txh_prop_s, rec_prop_s)
+
+# --- 2) Derive the proposal id (proposalCount - 1) ---
+#try:
+#    pc_s = secure.functions.proposalCount().call()
+#    pid_s = pc_s - 1
+#except Exception:
+#    pid_s = 0
+#print('Derived proposal id (secure):', pid_s)
+
+# --- 3) IMPORTANT: set the proposal id on the attacker BEFORE execution ---
+#print('Setting proposalId on attacker contract (for secure test)')
+#tx_set_s = re_att.functions.setProposalId(pid_s).build_transaction({
+#    'from': attacker_account.address,
+#    'nonce': w3.eth.get_transaction_count(attacker_account.address),
+#    'gas': 120000,
+#    'gasPrice': GAS_PRICE,
+#    'chainId': chain_id
+#})
+#txh_set_s, rec_set_s = send_tx_signed(attacker_account, tx_set_s)
+#print('Set proposalId tx (secure):', txh_set_s)
+#dump_tx_artifact('attacker_setProposalId_secure', txh_set_s, rec_set_s)
+
+# --- 4) Confirm the proposal with the other owners so it becomes executable ---
+#print('Confirming transaction (secure) with required owners')
+#confirm_txs_secure = []
+#for i, acct in enumerate(owners[1:3], start=1):
+#    txh_c_s, rec_c_s = call_confirm(secure, get_owner_account(i), pid_s)
+#    confirm_txs_secure.append(txh_c_s)
+#    print(f'Confirm tx (secure {i}):', txh_c_s)
+#    dump_tx_artifact(f'sec_reentrancy_confirm_{i}', txh_c_s, rec_c_s)
+
+# --- 5) Record balances BEFORE execute (exact wei) for evidence ---
+#sec_before_r = w3.eth.get_balance(SECURE_ADDRESS)
+#att_before_r = w3.eth.get_balance(REENTRANCY_ATTACKER_ADDRESS)
+#print(f'Balances before execute (secure): Secure={eth(sec_before_r)} ETH, Attacker={eth(att_before_r)} ETH')
+
+# --- 6) Execute the proposal (this will call the attacker; Secure should block re-entry) ---
+#print('Executing proposal (secure) — should be protected against reentrancy')
+#txh_exec_s, rec_exec_s = call_execute(secure, owner_accounts[0], pid_s, gas=2_500_000)
+#print('Execute tx (secure):', txh_exec_s)
+#dump_tx_artifact('sec_reentrancy_execute', txh_exec_s, rec_exec_s)
+
+# --- 7) Record balances AFTER execute (exact wei) ---
+#sec_after_r = w3.eth.get_balance(SECURE_ADDRESS)
+#att_after_r = w3.eth.get_balance(REENTRANCY_ATTACKER_ADDRESS)
+#print(f'Balances after execute (secure): Secure={eth(sec_after_r)} ETH, Attacker={eth(att_after_r)} ETH')
+
+# --- 8) Compute deltas in wei (safe integer arithmetic) ---
+#attacker_delta_wei_s = int(att_after_r - att_before_r)
+#secure_delta_wei = int(sec_before_r - sec_after_r)
+
+#print(f'  Attacker delta (secure): {attacker_delta_wei_s} wei ({eth(attacker_delta_wei_s)} ETH)')
+#print(f'  Secure delta: {secure_delta_wei} wei ({eth(secure_delta_wei)} ETH)')
+
+# --- 9) Success criteria for Secure: attacker MUST NOT receive >= TARGET_X_ETH ---
+#target_wei = to_wei_eth(TARGET_X_ETH)
+#if attacker_delta_wei_s > target_wei:
+    # attacker got at least the transfer — this is a failure of the secure contract
+#    print('Unexpected Scenario Outcome: FAILURE — attacker received funds on Secure wallet (vulnerable behavior!).')
+#    summary['reentrancy']['secure_result'] = 'FAILURE_ATTACKER_RECEIVED_FUNDS'
+#elif attacker_delta_wei_s == target_wei:
+    # secure contract prevented reentrancy (expected)
+#    print('UnExpected Scenario Outcome: FAILURE — Secure Contract Atomic Execution guard failed and initial recieve transaction call successful (reentrancy not mitigated as designed).')
+#    summary['reentrancy']['secure_result'] = 'FAILURE_ATTACKER_RECEIVED_FUNDS'
+#else:
+#    print('Expected Scenario Outcome: NO FUNDS WERE TRANSFERRED') 
+#    summary['reentrancy']['secure_result'] = 'PASS_NO_FUNDS'
+
+# store details for artifacts
+#summary['reentrancy'].setdefault('secure', {})
+#summary['reentrancy']['secure'].update({
+#    'secure_before_wei': int(sec_before_r),
+#    'secure_after_wei': int(sec_after_r),
+#    'attacker_before_wei': int(att_before_r),
+#    'attacker_after_wei': int(att_after_r),
+#    'attacker_delta_wei': attacker_delta_wei_s,
+#    'secure_delta_wei': secure_delta_wei,
+#    'execute_tx': txh_exec_s,
+#    'propose_tx': txh_prop_s,
+#    'setProposalId_tx': txh_set_s,
+#    'confirm_txs': confirm_txs_secure
+#})
+
+# ---------------------------------
+
+#     UNECHECKED EXTERNAL CALL
+
+# ---------------------------------
+
+# ---------------------------------
+
+#   ATTACK EXECUTION (VULNERABLE)
+
+# ---------------------------------
+
+log_step('UNCHECKED EXTERNAL CALL (Vulnerable)')
+
+EXEC_INDEX = 5
+# --- 1) Propose tx sending TARGET_X_ETH to the attacker contract (on Vulnerable wallet) ---
+print('Proposing transaction (Vulnerable -> attacker)')
+txh_prop, rec_prop = call_propose(vuln, owner_accounts[0], SINKHOLE_ADDRESS, TARGET_X_ETH)
+print('Propose tx:', txh_prop); dump_tx_artifact('vul_sink_propose', txh_prop, rec_prop)
+
+# --- 2) Derive the proposal id (proposalCount - 1) ---
+print('Deriving the proposal id')
+try:
+    pc = vuln.functions.proposalCount().call(); pid = pc - 1
+except Exception:
+    pid = 0
+print('Derived proposal id (vulnerable):', pid)
+
+# --- 3) Confirm the proposal with the other owners so it becomes executable ---
+print('Confirming transaction (secure) with required owners')
+for i, acct in enumerate(owners[1:3], start=1):
+    txh_c, rec_c = call_confirm(vuln, get_owner_account(i), pid)
+    print('Confirm tx ({i}):', txh_c); dump_tx_artifact(f'vul_sink_confirm_{i}', txh_c, rec_c)
+
+# --- 4) Execute the proposal (this will activate the malicious recieve function in attacker contract.) ---
+print('Executing proposal (vulnerable) — sinkhole attack should succeed')
+txh_exec, rec_exec = call_execute(vuln, owner_accounts[0], pid, gas=2_500_000)
+print('Execute tx:', txh_exec); dump_tx_artifact('vul_sink_execute', txh_exec, rec_exec)
+
+# --- 5) Record contract state AFTER execute for comparison with secure wallet ---
+proposal_vuln = vuln.functions.getProposal(pid).call()
+vuln_tx_status = rec_exec.status
+summary['unchecked_external']['vuln_executed'] = proposal_vuln[EXEC_INDEX] 
+summary['unchecked_external']['vuln_tx_status'] = vuln_tx_status
+
+# --- 6) VULNERABLE FLOW ASSERTION (After txh_exec_s) ---
+# Assert VMS: Proposal is marked executed (CORRUPTED STATE)
+if proposal_vuln[EXEC_INDEX] and vuln_tx_status == 1:
+    print('VMS Divergence Proof: Proposal is marked executed despite external call uncertainty.')
+else:
+    print('VMS Failure: Expected proposal to be marked executed.')
+
+# ---------------------------------
+
+#   MITIGATION EXECUTION (SECURE)
+
+# ---------------------------------
+
+log_step('UNCHECKED EXTERNAL CALL (Secure)')
 
 # --- 1) Propose tx sending TARGET_X_ETH to the attacker contract (on Secure wallet) ---
 print('Proposing transaction (Secure -> attacker)')
-txh_prop_s, rec_prop_s = call_propose(secure, owners[0], REENTRANCY_ATTACKER_ADDRESS, TARGET_X_ETH)
-print('Propose tx:', txh_prop_s)
-dump_tx_artifact('sec_reentrancy_propose', txh_prop_s, rec_prop_s)
+txh_prop, rec_prop = call_propose(secure, owner_accounts[0], SINKHOLE_ADDRESS, TARGET_X_ETH)
+print('Propose tx:', txh_prop); dump_tx_artifact('sec_sink_propose', txh_prop, rec_prop)
 
 # --- 2) Derive the proposal id (proposalCount - 1) ---
+print('Deriving the proposal id')
 try:
-    pc_s = secure.functions.proposalCount().call()
-    pid_s = pc_s - 1
+    pc = secure.functions.proposalCount().call(); pid = pc - 1
 except Exception:
-    pid_s = 0
-print('Derived proposal id (secure):', pid_s)
+    pid = 0
+print('Derived proposal id (vulnerable):', pid)
 
-# --- 3) IMPORTANT: set the proposal id on the attacker BEFORE execution ---
-print('Setting proposalId on attacker contract (for secure test)')
-tx_set_s = re_att.functions.setProposalId(pid_s).build_transaction({
-    'from': attacker_account.address,
-    'nonce': w3.eth.get_transaction_count(attacker_account.address),
-    'gas': 120000,
-    'gasPrice': GAS_PRICE,
-    'chainId': chain_id
-})
-txh_set_s, rec_set_s = send_signed_tx(attacker_account, tx_set_s)
-print('Set proposalId tx (secure):', txh_set_s)
-dump_tx_artifact('attacker_setProposalId_secure', txh_set_s, rec_set_s)
-
-# --- 4) Confirm the proposal with the other owners so it becomes executable ---
-print('Confirming transaction (secure) with required owners')
-confirm_txs_secure = []
+# --- 3) Confirm the proposal with the other owners so it becomes executable ---
 for i, acct in enumerate(owners[1:3], start=1):
-    txh_c_s, rec_c_s = call_confirm(secure, acct, pid_s)
-    confirm_txs_secure.append(txh_c_s)
-    print(f'Confirm tx (secure {i}):', txh_c_s)
-    dump_tx_artifact(f'sec_reentrancy_confirm_{i}', txh_c_s, rec_c_s)
+    txh_c, rec_c = call_confirm(secure, get_owner_account(i), pid)
+    print('Confirm tx:', txh_c); dump_tx_artifact(f'sec_sink_confirm_{i}', txh_c, rec_c)
 
-# --- 5) Record balances BEFORE execute (exact wei) for evidence ---
-sec_before_r = w3.eth.get_balance(SECURE_ADDRESS)
-att_before_r = w3.eth.get_balance(REENTRANCY_ATTACKER_ADDRESS)
-print(f'Balances before execute (secure): Secure={eth(vuln_before_s)} ETH, Attacker={eth(att_before_s)} ETH')
+# --- 4) Execute the proposal (this will activate the malicious recieve function in attacker contract.) ---
+print('Executing proposal (secure) — should be protected against sinkhole attack')
+txh_exec_s, rec_exec_s = call_execute(secure, owner_accounts[0], pid, gas=2_500_000)
+print('Execute tx:', txh_exec_s); dump_tx_artifact('sec_sink_execute', txh_exec_s, rec_exec_s)
 
-# --- 6) Execute the proposal (this will call the attacker; Secure should block re-entry) ---
-print('Executing proposal (secure) — should be protected against reentrancy')
-txh_exec_s, rec_exec_s = call_execute(secure, owners[0], pid_s, gas=2_500_000)
-print('Execute tx (secure):', txh_exec_s)
-dump_tx_artifact('sec_reentrancy_execute', txh_exec_s, rec_exec_s)
+# --- 5) Record contract state AFTER execute for comparison with Vulnerable wallet ---
+# Note: Secure execution should result in a REVERT (status=0)
+proposal_secure = secure.functions.getProposal(pid).call() 
+secure_tx_status = rec_exec_s.status
+summary['unchecked_external']['secure_executed'] = proposal_secure[EXEC_INDEX] 
+summary['unchecked_external']['secure_tx_status'] = secure_tx_status
 
-# --- 7) Record balances AFTER execute (exact wei) ---
-sec_after_r = w3.eth.get_balance(SECURE_ADDRESS)
-att_after_r = w3.eth.get_balance(REENTRANCY_ATTACKER_ADDRESS)
-print(f'Balances after execute (secure): Secure={eth(vuln_after_s)} ETH, Attacker={eth(att_after_s)} ETH')
+# --- 6) SECURE FLOW ASSERTION (After txh_exec_s) ---
+# Note: Secure execution should result in a REVERT (status=0)
+# Assert SMS: Proposal is NOT marked executed (SAFE STATE)
 
-# --- 8) Compute deltas in wei (safe integer arithmetic) ---
-attacker_delta_wei_s = int(att_after_r - att_before_r)
-secure_delta_wei = int(sec_before_r - sec_after_r)
-
-print(f'  Attacker delta (secure): {attacker_delta_wei_s} wei ({eth(attacker_delta_wei_s)} ETH)')
-print(f'  Secure delta: {secure_delta_wei} wei ({eth(secure_delta_wei)} ETH)')
-
-# --- 9) Success criteria for Secure: attacker MUST NOT receive >= TARGET_X_ETH ---
-target_wei = to_wei_eth(TARGET_X_ETH)
-if attacker_delta_wei_s > target_wei:
-    # attacker got at least the transfer — this is a failure of the secure contract
-    print('Unexpected Scenario Outcome: FAILURE — attacker received funds on Secure wallet (vulnerable behavior!).')
-    summary['reentrancy']['secure_result'] = 'FAILURE_ATTACKER_RECEIVED_FUNDS'
-elif attacker_delta_wei_s == target_wei:
-    # secure contract prevented reentrancy (expected)
-    print('Expected Scenario Outcome: PASS — attacker did NOT receive beyond the target transfer (reentrancy mitigated).')
-    summary['reentrancy']['secure_result'] = 'PASS_NO_FUNDS'
+if not proposal_secure[EXEC_INDEX] and secure_tx_status == 0:
+    print('SMS Divergence Proof: Proposal is NOT executed because transaction reverted successfully.')
 else:
-    print('Unexpected Scenario Outcome: NO FUNDS WERE TRANSFERRED') 
-
-# store details for artifacts
-summary['reentrancy'].setdefault('secure', {})
-summary['reentrancy']['secure'].update({
-    'secure_before_wei': int(vuln_before_s),
-    'secure_after_wei': int(vuln_after_s),
-    'attacker_before_wei': int(att_before_s),
-    'attacker_after_wei': int(att_after_s),
-    'attacker_delta_wei': attacker_delta_wei_s,
-    'secure_delta_wei': secure_delta_wei,
-    'execute_tx': txh_exec_s,
-    'propose_tx': txh_prop_s,
-    'setProposalId_tx': txh_set_s,
-    'confirm_txs': confirm_txs_secure
-})
+    print('SMS Failure: Secure contract did not revert as expected.')
