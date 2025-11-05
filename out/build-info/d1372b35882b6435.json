@@ -1,1 +1,0 @@
-{"id":"d1372b35882b6435","source_id_to_path":{"0":"script/Factory.s.sol","1":"src/SecureMultiSig.sol","2":"src/VulnerableMultiSig.sol","3":"src/malicious_contract/ReentrancyAttacker.sol","4":"src/malicious_contract/Sinkhole.sol"},"language":"Solidity"}

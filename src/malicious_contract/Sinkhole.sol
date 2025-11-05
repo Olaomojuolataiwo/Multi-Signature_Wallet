@@ -14,6 +14,8 @@ contract Sinkhole {
     }
 
     receive() external payable {
+        require(false, "SINKHOLE_ACTIVATED_REVERT");
+
         // Simply accept funds and flip locked to demonstrate unreachable funds if self-destructed later.
         locked = true;
         emit Locked(msg.sender, msg.value);
