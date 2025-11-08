@@ -110,6 +110,23 @@ contract VulnerableMultiSig {
         p.executed = true;
     }
 
+    /// @notice Create many proposals in one transaction (danger: unbounded loop)
+    function batchPropose(address[] calldata tos, uint256[] calldata values, bytes[] calldata datas) external {
+        require(tos.length == values.length && tos.length == datas.length, "length mismatch");
+        for (uint256 i = 0; i < tos.length; ++i) {
+            // call the existing external function (so the same logic runs, including events)
+            // We call internal creation function if you have one, otherwise call external:
+            this.proposeTransaction(tos[i], values[i], datas[i]);
+        }
+    }
+
+    /// @notice Confirm multiple proposals in one transaction (danger: unbounded loop)
+    function batchConfirm(uint256[] calldata ids) external {
+        for (uint256 i = 0; i < ids.length; ++i) {
+            this.confirmTransaction(ids[i]);
+        }
+    }
+
     /// @notice Batch execute many proposals (gas exhaustion danger)
     function batchExecute(uint256[] calldata ids) external {
         // T-11: unbounded loop over user-supplied array — gas exhaustion risk.

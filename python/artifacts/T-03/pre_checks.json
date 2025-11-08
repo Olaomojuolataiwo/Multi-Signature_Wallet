@@ -1,20 +1,20 @@
 {
   "chainId": 11155111,
-  "vulnerable_balance_before": 105000000000000000,
-  "secure_balance_before": 240000000000000000,
+  "vulnerable_balance_before": 0,
+  "secure_balance_before": 0,
   "attacker_balance_before": 5000000000000000,
   "owners": [
     {
       "address": "0xcc7a3706Df7FCcFbF99f577382BC62C0e565FcF0",
-      "balance_wei": 105695513713893526
+      "balance_wei": 105654443981683040
     },
     {
       "address": "0x513B1d92C2CA2d364B9d99ABabA485D298bdCbea",
-      "balance_wei": 26463359824905160
+      "balance_wei": 26463359725455980
     },
     {
       "address": "0xAB168F094e0037eDA6562da1d4784bD44B1860A1",
-      "balance_wei": 83493859869850660
+      "balance_wei": 83493859796800960
     }
   ]
 }
