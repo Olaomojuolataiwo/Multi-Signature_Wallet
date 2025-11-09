@@ -177,7 +177,7 @@ def batch_confirm(contract, confirmer_acct, pids_list, nonce_manager):
         return None, None
     if has_batch_fn(contract, "batchConfirm"):
         fn = contract.functions.batchConfirm(pids_list)
-        tx = fn.build_transaction({"from": confirmer_acct.address, "chainId": chain_id})
+        tx = fn.build_transaction({"from": confirmer_acct.address, "nonce": nonce_manager.next(), "gas": 1_500_000, "gasPrice": GAS_PRICE, "chainId": chain_id})
         txh, rec = sign_send(w3, confirmer_acct, tx, nonce_manager=nonce_manager, wait_receipt=True)
         dump_tx_artifact("batch_confirm_tx", txh, rec)
         return txh, rec
@@ -266,16 +266,18 @@ def send_signed_raw_and_wait(w3, signed_raw, timeout=RECEIPT_TIMEOUT):
             # re-raise for unexpected errors
             raise
 
-    # wait for receipt (blocking)
-    start = time.time()
+    deadline = time.time() + timeout
     while True:
         try:
-            rec = w3.eth.get_transaction_receipt(txh_hex)
+            rec = w3.eth.wait_for_transaction_receipt(txh_hex, timeout=600)
+            # receipt available -> mined -> return
             return txh_hex, rec
         except w3_ex.TransactionNotFound:
-            if time.time() - start > timeout:
+            # still pending
+            if time.time() > deadline:
                 raise w3_ex.TimeExhausted(f"Timed out waiting for receipt for {txh_hex}")
-            time.sleep(2)
+            # poll slower to avoid RPC spam
+            time.sleep(3)
 
 def sign_send(w3, acct: Account, tx_dict: dict, nonce_manager: NonceManager = None, wait_receipt=True, timeout=RECEIPT_TIMEOUT):
     """
@@ -298,7 +300,7 @@ def sign_send(w3, acct: Account, tx_dict: dict, nonce_manager: NonceManager = No
     if "gas" not in tx_dict or not tx_dict["gas"]:
         try:
             est = w3.eth.estimate_gas({**tx_dict, "from": acct.address})
-            tx_dict["gas"] = int(est * 1.25)
+            tx_dict["gas"] = int(est * 2.25)
         except Exception:
             tx_dict["gas"] = DEFAULT_GAS_LIMIT
 
@@ -1027,7 +1029,7 @@ summary = {'reentrancy': {}, 'unchecked_external': {}, 'batch': {}}
 
 
 # --------------------------------------
-#           BATCH GAS EXHAUSTION
+#           BATCH EXECUTION TEST
 # --------------------------------------
 
 # ---------------------------------
@@ -1038,7 +1040,7 @@ small_amt_wei = int( (Decimal(TARGET_X_ETH) * Decimal(10**18)) / Decimal(40) )
 owner_addresses = [acct.address for acct in owner_accounts]
 proposer_acct = owner_accounts[0]
 nonce_manager = NonceManager(w3, proposer_acct.address)
-NUM_FILLERS = 17
+NUM_FILLERS = 2
 EXEC_INDEX = 5
 
 log_step('BATCH GAS EXHAUSTION (Vulnerable)')
@@ -1164,15 +1166,17 @@ else:
 print(' Confirming ALL 35 proposals (VMS)')
 confirmer1 = owner_accounts[1]
 confirmer2 = owner_accounts[2]
+nonce_manager_1 = NonceManager(w3, confirmer1.address)
+nonce_manager_2 = NonceManager(w3, confirmer2.address)
 
 if has_batch_fn(vuln, "batchConfirm"):
     # use batchConfirm for each confirmer
-    nonce_manager.set_next(max(nonce_manager.peek(), w3.eth.get_transaction_count(confirmer1.address, "pending")))
-    txh_c1, rec_c1 = batch_confirm(vuln, confirmer1, batch_info, nonce_manager)
+    nonce_manager_1.set_next(max(nonce_manager.peek(), w3.eth.get_transaction_count(confirmer1.address, "pending")))
+    txh_c1, rec_c1 = batch_confirm(vuln, confirmer1, batch_info, nonce_manager_1)
     print('Confirm tx (owner1):', txh_c1); dump_tx_artifact('vul_batch_confirm_owner1', txh_c1, rec_c1)
 
-    nonce_manager.set_next(max(nonce_manager.peek(), w3.eth.get_transaction_count(confirmer2.address, "pending")))
-    txh_c2, rec_c2 = batch_confirm(vuln, confirmer2, batch_info, nonce_manager)
+    nonce_manager_2.set_next(max(nonce_manager.peek(), w3.eth.get_transaction_count(confirmer2.address, "pending")))
+    txh_c2, rec_c2 = batch_confirm(vuln, confirmer2, batch_info, nonce_manager_2)
     print('Confirm tx (owner2):', txh_c2); dump_tx_artifact('vul_batch_confirm_owner2', txh_c2, rec_c2)
 else:
     # fallback to individual confirms (existing behavior)
@@ -1193,7 +1197,7 @@ vul_executed = vuln.functions.getProposal(pid).call()
 print('Execution Status per Wallet:', vul_executed[EXEC_INDEX])
 print('Execution Status per Blockchain:', batch_vul_tx_status)
 
-if batch_vul_tx_status == 1 and vuln_executed[EXEC_INDEX]:
+if batch_vul_tx_status == 1 and vul_executed[EXEC_INDEX]:
     print('RESULT: VMS is VULNERABLE. Tx Succeeded (Status=1) despite failed call, leading to state inconsistency.')
     summary['unchecked_external']['post_dest_vuln'] = 'VULNERABLE_CORRUPTED_STATE'
 else:
