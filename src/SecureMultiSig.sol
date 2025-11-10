@@ -193,7 +193,7 @@ contract SecureMultiSig {
     /// @notice Confirm multiple proposals in one transaction (danger: unbounded loop)
     function batchConfirm(uint256[] calldata ids) external {
         for (uint256 i = 0; i < ids.length; ++i) {
-            this.confirmTransaction(ids[i]);
+            confirmTransaction(ids[i]);
         }
     }
 

@@ -1,0 +1,22 @@
+{
+  "tx": "d59698d855638d85ae0424540a38e36d3a1573398998539ab08b042a27912572",
+  "receipt": {
+    "type": 2,
+    "status": 1,
+    "cumulativeGasUsed": 6164850,
+    "logs": [
+      "AttributeDict({'address': '0xDC5d7F700415F904aa6153582D17e32A692D4788', 'topics': [HexBytes('0x6d4365eeea2290a1fb5155f6f527bb01f4a2797dea12f20abc314effacafd202'), HexBytes('0x0000000000000000000000000000000000000000000000000000000000000001'), HexBytes('0x000000000000000000000000dc5d7f700415f904aa6153582d17e32a692d4788'), HexBytes('0x000000000000000000000000513b1d92c2ca2d364b9d99ababa485d298bdcbea')], 'data': HexBytes('0x0000000000000000000000000000000000000000000000000000000000000000'), 'blockHash': HexBytes('0x8a942262663629c142398653549390c4d12755401439ed3e788f3b1395e495fc'), 'blockNumber': 9592573, 'blockTimestamp': '0x69107b20', 'transactionHash': HexBytes('0xd59698d855638d85ae0424540a38e36d3a1573398998539ab08b042a27912572'), 'transactionIndex': 58, 'logIndex': 76, 'removed': False})",
+      "AttributeDict({'address': '0xDC5d7F700415F904aa6153582D17e32A692D4788', 'topics': [HexBytes('0x6d4365eeea2290a1fb5155f6f527bb01f4a2797dea12f20abc314effacafd202'), HexBytes('0x0000000000000000000000000000000000000000000000000000000000000002'), HexBytes('0x000000000000000000000000dc5d7f700415f904aa6153582d17e32a692d4788'), HexBytes('0x000000000000000000000000ab168f094e0037eda6562da1d4784bd44b1860a1')], 'data': HexBytes('0x0000000000000000000000000000000000000000000000000000000000000000'), 'blockHash': HexBytes('0x8a942262663629c142398653549390c4d12755401439ed3e788f3b1395e495fc'), 'blockNumber': 9592573, 'blockTimestamp': '0x69107b20', 'transactionHash': HexBytes('0xd59698d855638d85ae0424540a38e36d3a1573398998539ab08b042a27912572'), 'transactionIndex': 58, 'logIndex': 77, 'removed': False})"
+    ],
+    "logsBloom": "b'\\x04\\x00\\x00\\x10\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x01\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00@\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x04\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x04\\x00\\x00\\x00\\x00\\x00\\x00\\x01\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x04\\x00\\x00\\x00\\x00\\x04\\x00\\x00\\x00\\x00\\x00 \\x00@\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00 \\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x01\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x10\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x80\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00@\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x08\\x00\\x00\\x00\\x00\\x80\\x00\\x00\\x10\\x02\\x00\\x00\\x00\\x02\\x00\\x00'",
+    "transactionHash": "b\"\\xd5\\x96\\x98\\xd8Uc\\x8d\\x85\\xae\\x04$T\\n8\\xe3m:\\x15s9\\x89\\x98S\\x9a\\xb0\\x8b\\x04*'\\x91%r\"",
+    "transactionIndex": 58,
+    "blockHash": "b'\\x8a\\x94\"bf6)\\xc1B9\\x86ST\\x93\\x90\\xc4\\xd1\\'U@\\x149\\xed>x\\x8f;\\x13\\x95\\xe4\\x95\\xfc'",
+    "blockNumber": 9592573,
+    "gasUsed": 206303,
+    "effectiveGasPrice": 1000000,
+    "from": "0xcc7a3706Df7FCcFbF99f577382BC62C0e565FcF0",
+    "to": "0xDC5d7F700415F904aa6153582D17e32A692D4788",
+    "contractAddress": null
+  }
+}
