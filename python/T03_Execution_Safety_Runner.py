@@ -66,6 +66,9 @@ for i, addr in enumerate(owner_addresses):
     print(f"  Owner[{i}] = {addr}")
 
 pathlib.Path(ARTIFACT_DIR).mkdir(parents=True, exist_ok=True)
+NUM_OWNERS = len(owner_accounts)
+if NUM_OWNERS == 0:
+    raise SystemExit("No owner accounts available in OWNER_PRIVATE_KEYS")
 
 # Minimal ABI for interactions (use exact ABIs if different)
 MIN_ABI = [
@@ -112,6 +115,17 @@ vuln = w3.eth.contract(address=w3.to_checksum_address(VULNERABLE_ADDRESS), abi=V
 secure = w3.eth.contract(address=w3.to_checksum_address(SECURE_ADDRESS), abi=SEC_MULTISIG_ABI)
 re_att = w3.eth.contract(address=w3.to_checksum_address(REENTRANCY_ATTACKER_ADDRESS), abi=REENTRANCY_ABI)
 sink = w3.eth.contract(address=w3.to_checksum_address(SINKHOLE_ADDRESS), abi=SINKHOLE_ABI)
+
+try:
+    # 1. Call the view function to retrieve the array of owners
+    owner_list = secure.functions.getOwners().call()
+
+    print("\nSecure Wallet Owners:")
+    for i, owner in enumerate(owner_list):
+        print(f"Owner {i}: {owner}")
+
+except Exception as e:
+    print(f"Error checking owners: {e}")
 
 def load_artifact(artifact_path: str):
     """Loads a contract artifact and extracts raw bytecode object."""
@@ -173,11 +187,38 @@ def batch_propose_and_get_pids(contract, proposer_acct, tos, vals, datas, nonce_
     return pids, txh, rec
 
 def batch_confirm(contract, confirmer_acct, pids_list, nonce_manager):
+    if not pids_list:
+        return None, None
+    if has_batch_fn(contract, "batchConfirm"):
+        
+        # --- START Nonce Diagnostic Insertion ---
+        network_nonce = w3.eth.get_transaction_count(confirmer_acct.address)
+        print(f"\n--- ⚙️ Nonce Check for {confirmer_acct.address} ---")
+        print(f"1. On-Chain Nonce (Expected Next Nonce): {network_nonce}")
+
+        # Note: The way the nonce_manager exposes its next nonce may vary.
+        # You may need to replace 'nonce_manager.current_nonce' with the actual attribute 
+        # or method (e.g., nonce_manager.peek_nonce() or nonce_manager.next_nonce) 
+        # based on your specific implementation.
+        proposed_nonce = nonce_manager.peek()
+        print(f"2. Nonce Manager's Proposed Nonce: {proposed_nonce}")
+        print(f"--- End Nonce Check ---\n")
+        # --- END Nonce Diagnostic Insertion ---
+
         fn = contract.functions.batchConfirm(pids_list)
         tx = fn.build_transaction({"from": confirmer_acct.address, "chainId": chain_id})
         txh, rec = sign_send(w3, confirmer_acct, tx, nonce_manager=nonce_manager, wait_receipt=True)
         dump_tx_artifact("batch_confirm_tx", txh, rec)
         return txh, rec
+    else:
+        last_rec = None
+        for i, pid in enumerate(pids_list):
+            fn = contract.functions.confirmTransaction(pid)
+            tx = fn.build_transaction({"from": confirmer_acct.address, "chainId": chain_id})
+            txh, rec = sign_send(w3, confirmer_acct, tx, nonce_manager=nonce_manager, wait_receipt=True)
+            dump_tx_artifact(f"confirm_fallback_{i}", txh, rec)
+            last_rec = rec
+        return txh, last_rec
 
 def batch_execute(contract, executor_acct, pids_list, nonce_manager):
     if not pids_list:
@@ -1028,7 +1069,7 @@ small_amt_wei = int( (Decimal(TARGET_X_ETH) * Decimal(10**18)) / Decimal(40) )
 owner_addresses = [acct.address for acct in owner_accounts]
 proposer_acct = owner_accounts[0]
 nonce_manager = NonceManager(w3, proposer_acct.address)
-NUM_FILLERS = 2
+NUM_FILLERS = 17
 EXEC_INDEX = 5
 
 log_step('BATCH GAS EXHAUSTION (Vulnerable)')
@@ -1102,6 +1143,9 @@ print(f'   Malicious Contract Inserted. Malicious PID: {mal_pid}')
 print(' Proposing 17 post-malicious filler proposals.')
 pending = w3.eth.get_transaction_count(proposer_acct.address, "pending")
 nonce_manager.set_next(max(nonce_manager.peek(), pending))
+print(f'   {len(batch_info)} filler proposals proposed (VMS).')
+print(batch_info)
+
 
 # build arrays for post-fillers
 tos_post = [owner_accounts[(i + 1) % len(owner_accounts)].address for i in range(NUM_FILLERS)]
@@ -1160,11 +1204,11 @@ nonce_manager_2 = NonceManager(w3, confirmer2.address)
 
 if has_batch_fn(vuln, "batchConfirm"):
     # use batchConfirm for each confirmer
-    nonce_manager_1.set_next(max(nonce_manager.peek(), w3.eth.get_transaction_count(confirmer1.address, "pending")))
+    nonce_manager_1.set_next(w3.eth.get_transaction_count(confirmer1.address, "pending"))
     txh_c1, rec_c1 = batch_confirm(vuln, confirmer1, batch_info, nonce_manager_1)
     print('Confirm tx (owner1):', txh_c1); dump_tx_artifact('vul_batch_confirm_owner1', txh_c1, rec_c1)
 
-    nonce_manager_2.set_next(max(nonce_manager.peek(), w3.eth.get_transaction_count(confirmer2.address, "pending")))
+    nonce_manager_2.set_next(w3.eth.get_transaction_count(confirmer2.address, "pending"))
     txh_c2, rec_c2 = batch_confirm(vuln, confirmer2, batch_info, nonce_manager_2)
     print('Confirm tx (owner2):', txh_c2); dump_tx_artifact('vul_batch_confirm_owner2', txh_c2, rec_c2)
 else:
@@ -1179,24 +1223,44 @@ print(' Executing ALL 35 proposals in a single transaction (VMS)')
 txh_exec_batch_v, rec_exec_batch_v = call_batch(vuln, owner_accounts[0], batch_info)
 dump_tx_artifact('vul_batch_execute', txh_exec_batch_v, rec_exec_batch_v)
 
-# Get the final executed status (should be False due to the revert)
-batch_vul_tx_status = rec_exec_batch_v.status
-vul_executed = vuln.functions.getProposal(pid).call()
+Vuln_Batch_Exec_status = rec_exec_batch_v.status
 
-print('Execution Status per Wallet:', vul_executed[EXEC_INDEX])
-print('Execution Status per Blockchain:', batch_vul_tx_status)
-
-if batch_vul_tx_status == 1 and vul_executed[EXEC_INDEX]:
-    print('RESULT: VMS is VULNERABLE. Tx Succeeded (Status=1) despite failed call, leading to state inconsistency.')
-    summary['unchecked_external']['post_dest_vuln'] = 'VULNERABLE_CORRUPTED_STATE'
-else:
-    print('ERROR: VMS did not exhibit expected vulnerable behavior (Tx status or executed flag is wrong).')
-    summary['unchecked_external']['post_dest_vuln'] = 'ERROR_VULNERABLE_TOO_SAFE'
+print('Batch Execution Status:', Vuln_Batch_Exec_status)
 
 # ---------------------------------
 #   ATTACK MITIGATION (SECURE)
 # ---------------------------------
+
+log_step('BATCH GAS EXHAUSTION (Secure)')
+
+# --- Resolve secure owners on-chain ---
+onchain_secure_owners = secure.functions.getOwners().call()
+print("\nSecure wallet reports owners:", onchain_secure_owners)
+
+# Map owner addresses -> loaded private keys (must match)
+local_key_map = {acct.address.lower(): acct for acct in owner_accounts}
+
+secure_owner_accounts = []
+for addr in onchain_secure_owners:
+    acct = local_key_map.get(addr.lower())
+    if acct is None:
+        raise SystemExit(
+            f"ERROR: No local private key available for secure owner {addr}.\n"
+            "Your secure wallet signer set must match OWNER_PRIVATE_KEYS."
+        )
+    secure_owner_accounts.append(acct)
+
+# Choose proposers/confirmers directly from resolved list
+sec_proposer_acct = secure_owner_accounts[0]
+sec_confirmer1    = secure_owner_accounts[1]
+sec_confirmer2    = secure_owner_accounts[2]
+
+small_amt_wei = int( (Decimal(TARGET_X_ETH) * Decimal(10**18)) / Decimal(40) )
+NUM_FILLERS = 17
+EXEC_INDEX = 5
 secure_batch_info = []
+sec_nonce_manager = NonceManager(w3, sec_proposer_acct.address)
+sec_nonce_manager.set_next(max(sec_nonce_manager.peek(), w3.eth.get_transaction_count(sec_proposer_acct.address, "pending")))
 
 # --- 1): Propose 17 small proposals (Filler 1 - SMS) ---
 print(' Proposing 17 pre-malicious filler proposals (SMS)')
@@ -1205,11 +1269,27 @@ tos_s = [owner_accounts[(i + 1) % len(owner_accounts)].address for i in range(NU
 vals_s = [0 for _ in tos_s]
 datas_s = [b'' for _ in tos_s]
 
+owners_onchain = secure.functions.getOwners().call()
+owners_onchain = [w3.to_checksum_address(o) for o in owners_onchain]
+print("Secure wallet reports owners:", owners_onchain)
+
+if owners_onchain:
+    sec_proposer_acct = None
+    for acct in owner_accounts:
+        if acct.address in owners_onchain:
+            sec_proposer_acct = acct
+            break
+    if sec_proposer_acct is None:
+        raise SystemExit("Local owner private keys do NOT match the secure contract's owners. Fix key mapping.")
+else:
+    sec_proposer_acct = owner_accounts[0]
+
+
 if has_batch_fn(secure, "batchPropose"):
     sec_nonce_manager.set_next(max(sec_nonce_manager.peek(), w3.eth.get_transaction_count(sec_proposer_acct.address, "pending")))
     pc_before_s = secure.functions.proposalCount().call()
     fn_s = secure.functions.batchPropose(tos_s, vals_s, datas_s)
-    tx = fn_s.build_transaction({"from": sec_proposer_acct.address, "chainId": w3.eth.chain_id})
+    tx = fn_s.build_transaction({"from": sec_proposer_acct.address, "gas": 1_500_000, "chainId": w3.eth.chain_id})
     txh_prop_s, rec_prop_s = sign_send(w3, sec_proposer_acct, tx, nonce_manager=sec_nonce_manager, wait_receipt=True)
     dump_tx_artifact('sec_batch_propose_all', txh_prop_s, rec_prop_s)
     # --- 2) Derive the proposal id (proposalCount - 1) ---
@@ -1245,14 +1325,15 @@ else:
             pid_s = 0
         secure_batch_info.append(pid_s)
 
-print(f'   {len(secure_batch_info)} filler proposals proposed (SMS).')
+print(f' {len(secure_batch_info)} filler proposals proposed (SMS).')
+print(f' PIDs proposed:', secure_batch_info)
 
 # --- 3) Propose the malicious reverting transaction (The Attack - SMS) ---
 print(' Inserting malicious reverting proposal on SMS.')
 
 mal_pid_s, reverter_addr_s = deploy_reverting_target_and_propose(secure, owner_accounts[0], Decimal(0), owners) 
 pending = w3.eth.get_transaction_count(proposer_acct.address, "pending")
-sec_nonce_manager = nonce_manager.set_next(max(nonce_manager.peek(), pending))
+sec_nonce_manager.set_next(max(sec_nonce_manager.peek(), w3.eth.get_transaction_count(sec_proposer_acct.address, "pending")))
 secure_batch_info.append(mal_pid_s)
 
 print(f'   Malicious Contract Inserted. Malicious PID: {mal_pid_s}')
@@ -1261,9 +1342,7 @@ print(f'   Malicious Contract Inserted. Malicious PID: {mal_pid_s}')
 print(' Proposing 17 post-malicious filler proposals on SMS.')
 
 # --- IMPORTANT: re-sync nonce_manager after malicious proposal insertion ---
-pending = w3.eth.get_transaction_count(sec_proposer_acct.address, "pending")
-sec_nonce_manager.set_next(max(sec_nonce_manager.peek(), pending))
-
+sec_nonce_manager.set_next(max(sec_nonce_manager.peek(), w3.eth.get_transaction_count(sec_proposer_acct.address, "pending")))
 tos_post_s = [owner_accounts[(i + 1) % len(owner_accounts)].address for i in range(NUM_FILLERS)]
 vals_post_s = [0 for _ in tos_post_s]
 datas_post_s = [b'' for _ in tos_post_s]
@@ -1271,7 +1350,7 @@ datas_post_s = [b'' for _ in tos_post_s]
 if has_batch_fn(secure, "batchPropose"):
     pc_before_s2 = secure.functions.proposalCount().call()
     fn_post_s = secure.functions.batchPropose(tos_post_s, vals_post_s, datas_post_s)
-    tx = fn_post_s.build_transaction({"from": sec_proposer_acct.address, "chainId": w3.eth.chain_id})
+    tx = fn_post_s.build_transaction({"from": sec_proposer_acct.address, "gas": 1_500_000, "chainId": w3.eth.chain_id})
     txh_post_s, rec_post_s = sign_send(w3, sec_proposer_acct, tx, nonce_manager=sec_nonce_manager, wait_receipt=True)
     dump_tx_artifact('sec_batch_propose_post_all', txh_post_s, rec_post_s)
     try:
@@ -1314,14 +1393,16 @@ print(f'   {len(secure_batch_info)} filler proposals proposed (SMS).')
 print(' Confirming ALL 35 proposals (SMS)')
 confirmer1 = owner_accounts[1]
 confirmer2 = owner_accounts[2]
+sec_nonce_manager_1 = NonceManager(w3, confirmer1.address)
+sec_nonce_manager_2 = NonceManager(w3, confirmer2.address)
 
 if has_batch_fn(secure, "batchConfirm"):
-    sec_nonce_manager.set_next(max(sec_nonce_manager.peek(), w3.eth.get_transaction_count(confirmer1.address, "pending")))
-    txh_c1, rec_c1 = batch_confirm(secure, confirmer1, secure_batch_info, sec_nonce_manager)
+    sec_nonce_manager_1.set_next(w3.eth.get_transaction_count(confirmer1.address, "pending"))
+    txh_c1, rec_c1 = batch_confirm(secure, confirmer1, secure_batch_info, sec_nonce_manager_1)
     print('Confirm tx (owner1):', txh_c1); dump_tx_artifact('sec_batch_confirm_owner1', txh_c1, rec_c1)
 
-    sec_nonce_manager.set_next(max(sec_nonce_manager.peek(), w3.eth.get_transaction_count(confirmer2.address, "pending")))
-    txh_c2, rec_c2 = batch_confirm(secure, confirmer2, secure_batch_info, sec_nonce_manager)
+    sec_nonce_manager_2.set_next(w3.eth.get_transaction_count(confirmer2.address, "pending"))
+    txh_c2, rec_c2 = batch_confirm(secure, confirmer2, secure_batch_info, sec_nonce_manager_2)
     print('Confirm tx (owner2):', txh_c2); dump_tx_artifact('sec_batch_confirm_owner2', txh_c2, rec_c2)
 else:
     for pid in secure_batch_info:
@@ -1331,21 +1412,206 @@ else:
 
 # --- 6) Execute the batch (SMS) ---
 print(' Executing ALL 35 proposals in a single transaction (SMS) - EXPECT REVERT')
-try:
-    txh_exec_batch_s, rec_exec_batch_s = call_batch(secure, owners[0], secure_batch_info)
-    dump_tx_artifact('sec_batch_execute', txh_exec_batch_s, rec_exec_batch_s)
-    
-    secure_tx_status = rec_exec_batch_s.status
-    print(f'[CRITICAL FAIL] SMS transaction succeeded (Status={secure_tx_status}) when it should have reverted.')
-    summary['batch_revert_dos'] = {'secure': 'FAILURE_DOS_MITIGATION_FAILED'}
-    
-except Exception as e:
-    # This is the expected, secure outcome
-    print(f'[SUCCESS] SMS execution reverted as expected due to MAX_BATCH_SIZE limit.')
-    summary['batch_revert_dos'] = {'secure': 'PASS_DOS_MITIGATION_SUCCESS'}
 
-# Final summary write
-save_json(summary, 'summary.json')
-print('\n=== FINAL SUMMARY ===')
-print(json.dumps(summary, indent=2, default=str))
-print('Artifacts saved in', ARTIFACT_DIR)
+txh_exec_batch_s, rec_exec_batch_s = call_batch(secure, owner_accounts[0], secure_batch_info)
+dump_tx_artifact('sec_batch_execute', txh_exec_batch_s, rec_exec_batch_s)
+    
+Sec_Batch_Exec_status = rec_exec_batch_s.status
+
+print('Batch Execution Status:', Sec_Batch_Exec_status)
+
+ARTIFACT_DIR = ARTIFACT_DIR if 'ARTIFACT_DIR' in globals() else "./artifacts/T-03"
+PRECHECK_PATH = os.path.join(ARTIFACT_DIR, "pre_checks.json")
+OUT_ASSERTIONS = os.path.join(ARTIFACT_DIR, "assertions.json")
+
+# Replace these names with your actual variables if they differ:
+vuln_exec_rec = rec_exec_batch_v
+sec_exec_rec = rec_exec_batch_s
+vuln_pids = batch_info
+sec_pids = secure_batch_info
+attacker_addr = os.getenv("ATTACKER_ADDRESS") or (attacker_acct.address if 'attacker_acct' in globals() else None)
+target_eth_wei = int(Decimal(TARGET_X_ETH) * 10**18) if 'TARGET_X_ETH' in globals() else to_wei_eth(Decimal("0.1"))
+
+# Helper: load pre-check values (attacker / contract balances)
+pre = {}
+if os.path.exists(PRECHECK_PATH):
+    try:
+        with open(PRECHECK_PATH, "r") as f:
+            pre = json.load(f)
+    except Exception:
+        pre = {}
+else:
+    pre = {}
+
+def read_balance(addr):
+    try:
+        return int(w3.eth.get_balance(w3.to_checksum_address(addr)))
+    except Exception:
+        return None
+
+attacker_before = None
+if pre.get("attacker_balance_before") is not None:
+    attacker_before = int(pre["attacker_balance_before"])
+else:
+    # try other keys
+    attacker_before = int(pre.get("attacker_balance", 0)) if pre else None
+
+vulnerable_before = None
+secure_before = None
+if pre.get("vulnerable_balance_before") is not None:
+    vulnerable_before = int(pre["vulnerable_balance_before"])
+if pre.get("secure_balance_before") is not None:
+    secure_before = int(pre["secure_balance_before"])
+
+attacker_after = read_balance(attacker_addr) if attacker_addr else None
+vulnerable_after = read_balance(VULNERABLE_ADDRESS)
+secure_after = read_balance(SECURE_ADDRESS)
+
+# Helper to probe proposals(pid) and locate boolean executed flag
+def proposal_executed_flag(contract, pid):
+    try:
+        prop = contract.functions.proposals(pid).call()
+    except Exception:
+        # maybe the getter is named differently; try proposalsMap or proposal
+        try:
+            prop = contract.functions.proposal(pid).call()
+        except Exception:
+            return None
+    # prop may be a tuple — search for a bool
+    for idx, item in enumerate(prop):
+        if isinstance(item, bool):
+            return bool(item)
+    # fallback: common layout address,uint256,bytes,bool,uint256 => index 3
+    try:
+        return bool(prop[3])
+    except Exception:
+        return None
+
+# Read MAX_BATCH if available on secure contract
+max_batch = None
+try:
+    max_batch = secure.functions.MAX_BATCH().call()
+except Exception:
+    # not present or different name; try maxBatch
+    try:
+        max_batch = secure.functions.maxBatch().call()
+    except Exception:
+        max_batch = None
+
+# Build summary / computed facts
+summary = {
+    "vulnerable": {
+        "exec_receipt": dict(vuln_exec_rec) if vuln_exec_rec else None,
+        "pids": vuln_pids,
+        "pids_executed": {},
+    },
+    "secure": {
+        "exec_receipt": dict(sec_exec_rec) if sec_exec_rec else None,
+        "pids": sec_pids,
+        "pids_executed": {},
+        "max_batch": int(max_batch) if max_batch is not None else None
+    },
+    "balances": {
+        "attacker_before": attacker_before,
+        "attacker_after": attacker_after,
+        "vulnerable_before": vulnerable_before,
+        "vulnerable_after": vulnerable_after,
+        "secure_before": secure_before,
+        "secure_after": secure_after
+    }
+}
+
+# Populate executed flags (best-effort)
+for pid in vuln_pids:
+    try:
+        executed = proposal_executed_flag(vuln, pid)
+    except Exception:
+        executed = None
+    summary["vulnerable"]["pids_executed"][pid] = executed
+
+for pid in sec_pids:
+    try:
+        executed = proposal_executed_flag(secure, pid)
+    except Exception:
+        executed = None
+    summary["secure"]["pids_executed"][pid] = executed
+
+# Compute attacker deltas
+attacker_delta = None
+if attacker_before is not None and attacker_after is not None:
+    attacker_delta = attacker_after - attacker_before
+
+vul_delta = None
+if vulnerable_before is not None and vulnerable_after is not None:
+    vul_delta = vulnerable_before - vulnerable_after
+
+sec_delta = None
+if secure_before is not None and secure_after is not None:
+    sec_delta = secure_before - secure_after
+
+summary["computed"] = {
+    "attacker_delta": attacker_delta,
+    "vulnerable_delta": vul_delta,
+    "secure_delta": sec_delta
+}
+
+# Assertion logic (intended divergence)
+assertions = {
+    "secure_preflight_guard": False,
+    "vulnerable_partial_execution": False,
+    "attacker_drained_more_than_expected_on_vulnerable": False,
+    "notes": []
+}
+
+# 1) Secure behavior: if MAX_BATCH present and len(sec_pids) > MAX_BATCH, secure should revert pre-flight:
+if max_batch is not None:
+    if len(sec_pids) > int(max_batch):
+        # Expect secure exec tx to have reverted (status == 0)
+        try:
+            sec_status = sec_exec_rec.status if sec_exec_rec is not None else None
+        except Exception:
+            sec_status = None
+        # If contract reverted at require(ids.length > MAX_BATCH...) it should be status == 0 and no pids executed.
+        no_exec_flags = all((summary["secure"]["pids_executed"].get(pid) in (False, None)) for pid in sec_pids)
+        if sec_status == 0 and no_exec_flags:
+            assertions["secure_preflight_guard"] = True
+        else:
+            assertions["notes"].append("Secure did not revert as expected or some pids executed unexpectedly.")
+    else:
+        assertions["notes"].append("MAX_BATCH exists but test batch size does not exceed it; cannot assert preflight guard.")
+else:
+    # no MAX_BATCH found — check secure's receipt: if it reverted immediately (status==0) and no pids executed we treat as guarded
+    try:
+        sec_status = sec_exec_rec.status if sec_exec_rec is not None else None
+    except Exception:
+        sec_status = None
+    no_exec_flags = all((summary["secure"]["pids_executed"].get(pid) in (False, None)) for pid in sec_pids)
+    if sec_status == 0 and no_exec_flags:
+        assertions["secure_preflight_guard"] = True
+    else:
+        assertions["notes"].append("Secure did not show an immediate revert / or pids executed; cannot confirm preflight guard.")
+
+# 2) Vulnerable behavior: expect some pids executed OR attacker gained > TARGET_X_ETH (indicates exploit / partial success)
+vul_executed_count = sum(1 for v in summary["vulnerable"]["pids_executed"].values() if v is True)
+if vul_executed_count > 0:
+    assertions["vulnerable_partial_execution"] = True
+else:
+    # fallback: check attacker balance delta
+    if attacker_delta is not None and attacker_delta >= target_eth_wei * 2:
+        assertions["vulnerable_partial_execution"] = True
+        assertions["attacker_drained_more_than_expected_on_vulnerable"] = True
+    elif attacker_delta is not None and attacker_delta >= target_eth_wei:
+        assertions["vulnerable_partial_execution"] = True
+
+# 3) Make a final pass to highlight clear divergence
+if assertions["secure_preflight_guard"] and assertions["vulnerable_partial_execution"]:
+    assertions["final_verdict"] = "PASS — secure prevented batch, vulnerable allowed partial/ malicious execution."
+else:
+    assertions["final_verdict"] = "WARN — did not observe the full expected divergence."
+
+# attach summary
+out = {"summary": summary, "assertions": assertions}
+save_path = save_json(out, "assertions.json")
+print("Assertions written ->", save_path)
+print("Final verdict:", assertions["final_verdict"])
+print(json.dumps(assertions, indent=2))

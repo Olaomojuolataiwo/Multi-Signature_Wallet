@@ -6,15 +6,15 @@
   "owners": [
     {
       "address": "0xcc7a3706Df7FCcFbF99f577382BC62C0e565FcF0",
-      "balance_wei": 105640490203447001
+      "balance_wei": 105588024981625370
     },
     {
       "address": "0x513B1d92C2CA2d364B9d99ABabA485D298bdCbea",
-      "balance_wei": 126463147076321480
+      "balance_wei": 126436545480193022
     },
     {
       "address": "0xAB168F094e0037eDA6562da1d4784bD44B1860A1",
-      "balance_wei": 143493698449836479
+      "balance_wei": 143476296733380365
     }
   ]
 }
