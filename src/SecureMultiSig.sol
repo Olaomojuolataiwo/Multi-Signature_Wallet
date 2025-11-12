@@ -60,6 +60,8 @@ contract SecureMultiSig {
     uint8 private constant _ENTERED = 2;
 
     // --- Events ---
+    event DebugPropose(address sender, address to, uint256 value);
+
     event ProposalCreated(
         uint256 indexed proposalId, address indexed proposer, address indexed to, uint256 value, bytes32 dataHash
     );
@@ -112,27 +114,50 @@ contract SecureMultiSig {
     }
 
     // -----------------------
-    // Core secure flows
+    // Core Proposal Logic (Internal)
     // -----------------------
 
-    /// @notice Propose a transaction for on-chain confirmation
-    function proposeTransaction(address to, uint256 value, bytes calldata data) external onlyOwner returns (uint256) {
+    /**
+     * @notice Internal function to create a proposal without checking for owner status,
+     * as the calling function must perform that check.
+     */
+    function _proposeTransaction(
+        address _proposer,
+        address _to,
+        uint256 _value,
+        bytes calldata _data
+    ) internal returns (uint256) {
         uint256 id = ++proposalCount;
-        bytes32 dataHash = keccak256(data);
+        bytes32 dataHash = keccak256(_data);
+        
+        // Retain the debug event (Source 32)
+        emit DebugPropose(_proposer, _to, _value);
 
         proposals[id] = ProposalMeta({
-            proposer: msg.sender,
-            to: to,
-            value: value,
+            proposer: _proposer, // The authenticated owner address
+            to: _to,
+            value: _value,
             dataHash: dataHash,
             confirmations: 0,
             executed: false,
             createdAt: block.timestamp,
             executeAfter: 0
         });
-
-        emit ProposalCreated(id, msg.sender, to, value, dataHash);
+        
+        // Retain the creation event (Source 34)
+        emit ProposalCreated(id, _proposer, _to, _value, dataHash); 
         return id;
+    }
+
+    // -----------------------
+    // Core secure flows
+    // -----------------------
+
+    /// @notice Propose a transaction for on-chain confirmation
+    function proposeTransaction(address to, uint256 value, bytes calldata data) external onlyOwner returns (uint256) {
+        // Access control (onlyOwner) is performed here.
+        // Then, the authenticated msg.sender is passed to the internal logic.
+        return _proposeTransaction(msg.sender, to, value, data);
     }
 
     /// @notice Confirm a proposal (owner only)
@@ -180,16 +205,27 @@ contract SecureMultiSig {
         emit Executed(proposalId, msg.sender, success, result);
     }
 
-    /// @notice Create many proposals in one transaction (danger: unbounded loop)
-    function batchPropose(address[] calldata tos, uint256[] calldata values, bytes[] calldata datas) external {
-        require(tos.length == values.length && tos.length == datas.length, "length mismatch");
+    /// @notice Create many proposals in one transaction (bounded)
+    function batchPropose(
+        address[] calldata tos, 
+        uint256[] calldata values, 
+        bytes[] calldata datas
+    ) external onlyOwner {
+        // Add onlyOwner modifier for security, as this function needs owner authorization.
+        require(tos.length > 0, "no proposals");
+        // MITIGATION T-11: cap batch size (Source 15: MAX_BATCH is 32)
+        require(tos.length <= MAX_BATCH, "batch size exceeds MAX_BATCH"); 
+        require(tos.length == values.length && tos.length == datas.length, "length mismatch"); 
+        
+        // The msg.sender is guaranteed to be an owner by the onlyOwner modifier.
+        address proposer = msg.sender;
+
         for (uint256 i = 0; i < tos.length; ++i) {
-            // call the existing external function (so the same logic runs, including events)
-            // We call internal creation function if you have one, otherwise call external:
-            this.proposeTransaction(tos[i], values[i], datas[i]);
+            // FIX: Call the internal function directly.
+            // msg.sender is preserved as the Owner for the proposer field.
+            _proposeTransaction(proposer, tos[i], values[i], datas[i]);
         }
     }
-
     /// @notice Confirm multiple proposals in one transaction (danger: unbounded loop)
     function batchConfirm(uint256[] calldata ids) external {
         for (uint256 i = 0; i < ids.length; ++i) {

@@ -162,12 +162,23 @@ print(f"Loaded Ephemeral Deployer artifact from: {DEPLOYER_ARTIFACT_PATH}")
 
 # helpers
 
-def batch_propose_and_get_pids(contract, proposer_acct, tos, vals, datas, nonce_manager):
+def batch_propose_and_get_pids(contract, proposer_acct: Account, tos, vals, datas, nonce_manager):
     # Ensure datas elements are bytes
     datas_clean = [d if isinstance(d, (bytes, bytearray, HexBytes)) else HexBytes(d) for d in datas]
     pc_before = contract.functions.proposalCount().call()
     # choose batch or fallback
     if has_batch_fn(contract, "batchPropose"):
+        # --- ADDED DEBUG STEP ---
+        # 1. Confirm the type of the argument
+        print(f"\n[DEBUG] Proposer Acct Type: {type(proposer_acct)}")
+        
+        # 2. Safely print the address being used to build the transaction
+        if hasattr(proposer_acct, 'address'):
+            print(f"[DEBUG] Address used in TX: {proposer_acct.address}")
+        else:
+            # If the object was corrupted to a string, this will fire
+            print(f"[DEBUG] ERROR: Account object missing .address attribute! Value: {proposer_acct}")
+        # ------------------------
         fn = contract.functions.batchPropose(tos, vals, datas_clean)
         tx = fn.build_transaction({"from": proposer_acct.address, "chainId": chain_id})
         txh, rec = sign_send(w3, proposer_acct, tx, nonce_manager=nonce_manager, wait_receipt=True)
@@ -1234,26 +1245,50 @@ print('Batch Execution Status:', Vuln_Batch_Exec_status)
 log_step('BATCH GAS EXHAUSTION (Secure)')
 
 # --- Resolve secure owners on-chain ---
-onchain_secure_owners = secure.functions.getOwners().call()
-print("\nSecure wallet reports owners:", onchain_secure_owners)
+
+# Check if the proposer (Owner[0]) is an owner
+proposer_address = "0xcc7a3706Df7FCcFbF99f577382BC62C0e565FcF0"
+
+is_owner_check = secure.functions.isOwner(proposer_address).call()
+
+print(f"\nIs {proposer_address} an owner? {is_owner_check}") 
+# This should print True if the contract was deployed correctly.
+
+try:
+    secure_owner_accounts_onchain = secure.functions.getOwners().call()
+    secure_owner_accounts_onchain_add = [w3.to_checksum_address(o) for o in secure_owner_accounts_onchain]
+except Exception as e:
+    print(f"[ERROR] could not read secure.getOwners(): {e}")
+    onchain_secure_owners = []
+
+print("Secure wallet reports owners:", secure_owner_accounts_onchain_add)
 
 # Map owner addresses -> loaded private keys (must match)
 local_key_map = {acct.address.lower(): acct for acct in owner_accounts}
 
 secure_owner_accounts = []
-for addr in onchain_secure_owners:
+for addr in secure_owner_accounts_onchain_add:
     acct = local_key_map.get(addr.lower())
     if acct is None:
         raise SystemExit(
             f"ERROR: No local private key available for secure owner {addr}.\n"
             "Your secure wallet signer set must match OWNER_PRIVATE_KEYS."
         )
-    secure_owner_accounts.append(acct)
+    else: secure_owner_accounts.append(acct)
+print("Secure wallet reports owners:", secure_owner_accounts)
 
 # Choose proposers/confirmers directly from resolved list
 sec_proposer_acct = secure_owner_accounts[0]
 sec_confirmer1    = secure_owner_accounts[1]
 sec_confirmer2    = secure_owner_accounts[2]
+
+# Check if the proposer (Owner[0]) is an owner
+proposer_address = sec_proposer_acct.address
+
+is_owner_check = secure.functions.isOwner(proposer_address).call()
+print("secure_owner_accounts[0]:", secure_owner_accounts[0])
+print(f"\nIs {proposer_address} an owner? {is_owner_check}") 
+# This should print True if the contract was deployed correctly.
 
 small_amt_wei = int( (Decimal(TARGET_X_ETH) * Decimal(10**18)) / Decimal(40) )
 NUM_FILLERS = 17
@@ -1265,73 +1300,44 @@ sec_nonce_manager.set_next(max(sec_nonce_manager.peek(), w3.eth.get_transaction_
 # --- 1): Propose 17 small proposals (Filler 1 - SMS) ---
 print(' Proposing 17 pre-malicious filler proposals (SMS)')
 
-tos_s = [owner_accounts[(i + 1) % len(owner_accounts)].address for i in range(NUM_FILLERS)]
+tos_s = [secure_owner_accounts[(i + 1) % len(secure_owner_accounts)].address for i in range(NUM_FILLERS)]
 vals_s = [0 for _ in tos_s]
 datas_s = [b'' for _ in tos_s]
 
-owners_onchain = secure.functions.getOwners().call()
-owners_onchain = [w3.to_checksum_address(o) for o in owners_onchain]
-print("Secure wallet reports owners:", owners_onchain)
+try:
+    secure_batch_info, txh_s_pre, rec_s_pre = batch_propose_and_get_pids(secure, sec_proposer_acct, tos_s, vals_s, datas_s, sec_nonce_manager)
+    logs = rec_s_pre.logs
+    DEBUG_EVENT_SIG = w3.keccak(text="DebugPropose(address,address,uint256)").hex()
 
-if owners_onchain:
-    sec_proposer_acct = None
-    for acct in owner_accounts:
-        if acct.address in owners_onchain:
-            sec_proposer_acct = acct
-            break
-    if sec_proposer_acct is None:
-        raise SystemExit("Local owner private keys do NOT match the secure contract's owners. Fix key mapping.")
-else:
-    sec_proposer_acct = owner_accounts[0]
+#    print("\n--- DebugPropose Events (Secure Wallet) ---")
+#    for log in logs:
+#        if log["topics"][0].hex() == DEBUG_EVENT_SIG:
+#            sender = "0x" + log["topics"][1].hex()[-40:]
+#            print(f"  msg.sender seen on-chain: {sender}")
+#    expected = sec_proposer_acct.address.lower()
+#    print(f"Expected proposer address:    {expected}")
 
+#    for log in logs:
+#        if log["topics"][0].hex() == DEBUG_EVENT_SIG:
+#            sender = ("0x" + log["topics"][1].hex()[-40:]).lower()
+#            print(f"Actual sender reported:      {sender}")
+#            print(f"Match: {sender == expected}")
 
-if has_batch_fn(secure, "batchPropose"):
-    sec_nonce_manager.set_next(max(sec_nonce_manager.peek(), w3.eth.get_transaction_count(sec_proposer_acct.address, "pending")))
-    pc_before_s = secure.functions.proposalCount().call()
-    fn_s = secure.functions.batchPropose(tos_s, vals_s, datas_s)
-    tx = fn_s.build_transaction({"from": sec_proposer_acct.address, "gas": 1_500_000, "chainId": w3.eth.chain_id})
-    txh_prop_s, rec_prop_s = sign_send(w3, sec_proposer_acct, tx, nonce_manager=sec_nonce_manager, wait_receipt=True)
-    dump_tx_artifact('sec_batch_propose_all', txh_prop_s, rec_prop_s)
-    # --- 2) Derive the proposal id (proposalCount - 1) ---
-    try:
-        pc_after_s = secure.functions.proposalCount().call()
-        secure_batch_info = list(range(int(pc_before_s), int(pc_after_s)))
-    except Exception as e:
-        print(f"[WARN] could not compute secure pids after batchPropose: {e}")
-        try:
-            pc = secure.functions.proposalCount().call()
-            secure_batch_info.append(pc - 1)
-        except Exception:
-            pass
-else:
-    for i in range(NUM_FILLERS):
-        recipient_address = owner_accounts[(i + 1) % len(owner_accounts)].address
-        fn_s = secure.functions.proposeTransaction(recipient_address, small_amt_wei, b"")
-        tx_s = fn_s.build_transaction({"from": sec_proposer_acct.address, "chainId": w3.eth.chain_id})
-        try:
-            txh_prop_s, rec_prop_s = sign_send(w3, sec_proposer_acct, tx_s, nonce_manager=sec_nonce_manager, wait_receipt=True)
-        except Exception as e:
-            print(f"[ERROR] secure propose #{i} failed to send or mine: {e}")
-            raise
-
-        print(f'  Secure Propose #{i} tx:', txh_prop_s)
-        dump_tx_artifact(f'sec_batch_propose_{i}', txh_prop_s, rec_prop_s)
-
-        try:
-            pc_s = secure.functions.proposalCount().call()
-            pid_s = pc_s - 1
-        except Exception as e:
-            print(f"[WARN] could not read secure proposalCount after propose #{i}: {e}; falling back to 0")
-            pid_s = 0
-        secure_batch_info.append(pid_s)
-
-print(f' {len(secure_batch_info)} filler proposals proposed (SMS).')
-print(f' PIDs proposed:', secure_batch_info)
-
+    print(f"  secure pre-fill proposals created: {len(secure_batch_info)} pids -> {secure_batch_info}")
+    dump_tx_artifact('sec_batch_propose_pre_tx', txh_s_pre, rec_s_pre)
+#except Web3.exceptions.ContractLogicError as cre:
+    # Usually revert from estimate_gas or build_transaction; extract reason
+#    reason = str(cre)
+#    print(f"[ERROR] secure pre-batchPropose reverted: {reason}")
+    # Optionally include recent txs from proposer pending/mempool or etherscan link if you have tx hash
+#    secure_batch_info = []
+except Exception as e:
+    print(f"[ERROR] unexpected error while batch_propose_and_get_pids (secure pre): {e}")
+    secure_batch_info = []
 # --- 3) Propose the malicious reverting transaction (The Attack - SMS) ---
 print(' Inserting malicious reverting proposal on SMS.')
 
-mal_pid_s, reverter_addr_s = deploy_reverting_target_and_propose(secure, owner_accounts[0], Decimal(0), owners) 
+mal_pid_s, reverter_addr_s = deploy_reverting_target_and_propose(secure, secure_owner_accounts[0], Decimal(0), owners) 
 pending = w3.eth.get_transaction_count(proposer_acct.address, "pending")
 sec_nonce_manager.set_next(max(sec_nonce_manager.peek(), w3.eth.get_transaction_count(sec_proposer_acct.address, "pending")))
 secure_batch_info.append(mal_pid_s)
@@ -1343,51 +1349,21 @@ print(' Proposing 17 post-malicious filler proposals on SMS.')
 
 # --- IMPORTANT: re-sync nonce_manager after malicious proposal insertion ---
 sec_nonce_manager.set_next(max(sec_nonce_manager.peek(), w3.eth.get_transaction_count(sec_proposer_acct.address, "pending")))
-tos_post_s = [owner_accounts[(i + 1) % len(owner_accounts)].address for i in range(NUM_FILLERS)]
+tos_post_s = [secure_owner_accounts[(i + 1) % len(secure_owner_accounts)].address for i in range(NUM_FILLERS)]
 vals_post_s = [0 for _ in tos_post_s]
 datas_post_s = [b'' for _ in tos_post_s]
+try:
+    post_pids_s, txh_post_s, rec_post_s = batch_propose_and_get_pids(secure, sec_proposer_acct, tos_post_s, vals_post_s, datas_post_s, sec_nonce_manager)
+    secure_batch_info.extend(post_pids_s)
+    dump_tx_artifact('sec_batch_propose_post_tx', txh_s_post, rec_s_post)
+    print(f"  secure post-fill proposals created: {len(pids_post)} pids")
+except web3.exceptions.ContractLogicError as cre:
+    print(f"[ERROR] secure post-batchPropose reverted: {cre}")
+except Exception as e:
+    print(f"[ERROR] unexpected error while batch_propose_and_get_pids (secure post): {e}")
 
-if has_batch_fn(secure, "batchPropose"):
-    pc_before_s2 = secure.functions.proposalCount().call()
-    fn_post_s = secure.functions.batchPropose(tos_post_s, vals_post_s, datas_post_s)
-    tx = fn_post_s.build_transaction({"from": sec_proposer_acct.address, "gas": 1_500_000, "chainId": w3.eth.chain_id})
-    txh_post_s, rec_post_s = sign_send(w3, sec_proposer_acct, tx, nonce_manager=sec_nonce_manager, wait_receipt=True)
-    dump_tx_artifact('sec_batch_propose_post_all', txh_post_s, rec_post_s)
-    try:
-        pc_after_s2 = secure.functions.proposalCount().call()
-        secure_batch_info.extend(list(range(int(pc_before_s2), int(pc_after_s2))))
-    except Exception as e:
-        print(f"[WARN] could not compute secure post pids after batchPropose: {e}")
-        try:
-            pc = secure.functions.proposalCount().call()
-            secure_batch_info.append(pc - 1)
-        except Exception:
-            pass
-else:
-    for i in range(NUM_FILLERS):
-        recipient_address = owner_accounts[(i + 1) % len(owner_accounts)].address
-        fn_s = secure.functions.proposeTransaction(recipient_address, small_amt_wei, b"")
-        tx_s = fn_s.build_transaction({"from": sec_proposer_acct.address, "chainId": w3.eth.chain_id})
-        try:
-            txh_prop_s, rec_prop_s = sign_send(w3, sec_proposer_acct, tx_s, nonce_manager=sec_nonce_manager, wait_receipt=True)
-        except Exception as e:
-            print(f"[ERROR] secure propose #{i} failed to send or mine: {e}")
-            raise
-
-        print(f'  Secure Post Propose #{i} tx:', txh_prop_s)
-        dump_tx_artifact(f'sec_batch_propose_post_{i}', txh_prop_s, rec_prop_s)
-
-        try:
-            pc_s = secure.functions.proposalCount().call()
-            pid_s = pc_s - 1
-        except Exception as e:
-            print(f"[WARN] could not read secure proposalCount after propose #{i}: {e}; falling back to 0")
-            pid_s = 0
-        secure_batch_info.append(pid_s)
-    print(f'  Secure Propose #{i} tx:', txh_prop_s)
-
-
-print(f'   {len(secure_batch_info)} filler proposals proposed (SMS).')
+print(f'   {len(secure_batch_info)} total secure filler proposals proposed (SMS).')
+print('  PIDs proposed (secure):', secure_batch_info)
 
 # --- 5) Confirm ALL 35 proposals for execution (SMS) ---
 print(' Confirming ALL 35 proposals (SMS)')
