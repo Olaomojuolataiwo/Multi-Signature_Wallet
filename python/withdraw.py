@@ -18,8 +18,8 @@ w3.middleware_onion.inject(ExtraDataToPOAMiddleware, layer=0)
 
 # 2. Wallet Addresses & Keys
 # MIGRATION PATH: Vulnerable (Old) -> Secure (New)
-OLD_MULTISIG_ADDRESS = "0x3986cf51dE65dAEDf7832851d6566F4708bf2A19" 
-NEW_MULTISIG_ADDRESS = "0xd1A5864efCf3693DeC5dfD3089a8Eb4487AdF685"
+OLD_MULTISIG_ADDRESS = "0xd1A5864efCf3693DeC5dfD3089a8Eb4487AdF685" 
+NEW_MULTISIG_ADDRESS = "0x3C534dB15ca3210FE4C3FD1E3D8Edc2Cb369A765"
 
 # **OWNER ACCOUNTS & KEYS**
 OWNER_DETAILS = {
@@ -49,268 +49,203 @@ KEY_2 = OWNER_DETAILS["2"]["private_key"]
 # 3. Contract ABI (from VulnerableMultiSig.txt)
 # We must use the ABI of the contract that *currently holds the funds*.
 VULNERABLE_MULTISIG_ABI = [
-  {
-    "type": "constructor",
-    "inputs": [
-      { "internalType": "address[]", "name": "_owners", "type": "address[]" },
-      { "internalType": "uint256", "name": "_threshold", "type": "uint256" }
-    ],
-    "stateMutability": "payable"
-  },
-  {
-    "type": "function",
-    "name": "addOwner",
-    "inputs": [{ "internalType": "address", "name": "newOwner", "type": "address" }],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "batchConfirm",
-    "inputs": [{ "internalType": "uint256[]", "name": "ids", "type": "uint256[]" }],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "batchExecute",
-    "inputs": [{ "internalType": "uint256[]", "name": "ids", "type": "uint256[]" }],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "batchPropose",
-    "inputs": [
-      { "internalType": "address[]", "name": "tos", "type": "address[]" },
-      { "internalType": "uint256[]", "name": "values", "type": "uint256[]" },
-      { "internalType": "bytes[]", "name": "datas", "type": "bytes[]" }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "cancelTransaction",
-    "inputs": [{ "internalType": "uint256", "name": "proposalId", "type": "uint256" }],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "changeThreshold",
-    "inputs": [{ "internalType": "uint256", "name": "newThreshold", "type": "uint256" }],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "confirmTransaction",
-    "inputs": [{ "internalType": "uint256", "name": "proposalId", "type": "uint256" }],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "dangerousAdd",
-    "inputs": [
-      { "internalType": "uint256", "name": "a", "type": "uint256" },
-      { "internalType": "uint256", "name": "b", "type": "uint256" }
-    ],
-    "outputs": [{ "internalType": "uint256", "name": "", "type": "uint256" }],
-    "stateMutability": "pure"
-  },
-  {
-    "type": "function",
-    "name": "emergencyWithdraw",
-    "inputs": [{ "internalType": "address payable", "name": "to", "type": "address" }],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "executeTransaction",
-    "inputs": [{ "internalType": "uint256", "name": "proposalId", "type": "uint256" }],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "executeWithSignature",
-    "inputs": [
-      { "internalType": "address", "name": "to", "type": "address" },
-      { "internalType": "uint256", "name": "value", "type": "uint256" },
-      { "internalType": "bytes", "name": "data", "type": "bytes" },
-      { "internalType": "bytes", "name": "signature", "type": "bytes" }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "getOwners",
-    "inputs": [],
-    "outputs": [{ "internalType": "address[]", "name": "", "type": "address[]" }],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "getProposal",
-    "inputs": [{ "internalType": "uint256", "name": "proposalId", "type": "uint256" }],
-    "outputs": [
-      { "internalType": "address", "name": "proposer", "type": "address" },
-      { "internalType": "address", "name": "to", "type": "address" },
-      { "internalType": "uint256", "name": "value", "type": "uint256" },
-      { "internalType": "bytes", "name": "data", "type": "bytes" },
-      { "internalType": "uint256", "name": "confirmations", "type": "uint256" },
-      { "internalType": "bool", "name": "executed", "type": "bool" },
-      { "internalType": "uint256", "name": "createdAt", "type": "uint256" }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "isOwner",
-    "inputs": [{ "internalType": "address", "name": "", "type": "address" }],
-    "outputs": [{ "internalType": "bool", "name": "", "type": "bool" }],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "naiveHash",
-    "inputs": [
-      { "internalType": "address", "name": "a", "type": "address" },
-      { "internalType": "uint256", "name": "b", "type": "uint256" },
-      { "internalType": "string", "name": "s", "type": "string" }
-    ],
-    "outputs": [{ "internalType": "bytes32", "name": "", "type": "bytes32" }],
-    "stateMutability": "pure"
-  },
-  {
-    "type": "function",
-    "name": "owners",
-    "inputs": [{ "internalType": "uint256", "name": "", "type": "uint256" }],
-    "outputs": [{ "internalType": "address", "name": "", "type": "address" }],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "proposeTransaction",
-    "inputs": [
-      { "internalType": "address", "name": "to", "type": "address" },
-      { "internalType": "uint256", "name": "value", "type": "uint256" },
-      { "internalType": "bytes", "name": "data", "type": "bytes" }
-    ],
-    "outputs": [{ "internalType": "uint256", "name": "", "type": "uint256" }],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "proposalCount",
-    "inputs": [],
-    "outputs": [{ "internalType": "uint256", "name": "", "type": "uint256" }],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "proposals",
-    "inputs": [{ "internalType": "uint256", "name": "", "type": "uint256" }],
-    "outputs": [
-      { "internalType": "address", "name": "proposer", "type": "address" },
-      { "internalType": "address", "name": "to", "type": "address" },
-      { "internalType": "uint256", "name": "value", "type": "uint256" },
-      { "internalType": "bytes", "name": "data", "type": "bytes" },
-      { "internalType": "uint256", "name": "confirmations", "type": "uint256" },
-      { "internalType": "bool", "name": "executed", "type": "bool" },
-      { "internalType": "uint256", "name": "createdAt", "type": "uint256" }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "removeOwner",
-    "inputs": [{ "internalType": "address", "name": "owner", "type": "address" }],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "splitSignature",
-    "inputs": [{ "internalType": "bytes", "name": "sig", "type": "bytes" }],
-    "outputs": [
-      { "internalType": "uint8", "name": "v", "type": "uint8" },
-      { "internalType": "bytes32", "name": "r", "type": "bytes32" },
-      { "internalType": "bytes32", "name": "s", "type": "bytes32" }
-    ],
-    "stateMutability": "pure"
-  },
-  {
-    "type": "function",
-    "name": "threshold",
-    "inputs": [],
-    "outputs": [{ "internalType": "uint256", "name": "", "type": "uint256" }],
-    "stateMutability": "view"
-  },
-  { "type": "receive", "stateMutability": "payable" },
-  {
-    "type": "event",
-    "name": "Cancelled",
-    "inputs": [
-      { "indexed": True, "internalType": "uint256", "name": "proposalId", "type": "uint256" },
-      { "indexed": True, "internalType": "address", "name": "canceller", "type": "address" }
-    ],
-    "anonymous": False
-  },
-  {
-    "type": "event",
-    "name": "Confirmed",
-    "inputs": [
-      { "indexed": True, "internalType": "uint256", "name": "proposalId", "type": "uint256" },
-      { "indexed": True, "internalType": "address", "name": "confirmer", "type": "address" }
-    ],
-    "anonymous": False
-  },
-  {
-    "type": "event",
-    "name": "Executed",
-    "inputs": [
-      { "indexed": True, "internalType": "uint256", "name": "proposalId", "type": "uint256" },
-      { "indexed": True, "internalType": "address", "name": "executor", "type": "address" },
-      { "indexed": False, "internalType": "bool", "name": "success", "type": "bool" },
-      { "indexed": False, "internalType": "bytes", "name": "result", "type": "bytes" }
-    ],
-    "anonymous": False
-  },
-  {
-    "type": "event",
-    "name": "OwnerAdded",
-    "inputs": [{ "indexed": True, "internalType": "address", "name": "newOwner", "type": "address" }],
-    "anonymous": False
-  },
-  {
-    "type": "event",
-    "name": "OwnerRemoved",
-    "inputs": [{ "indexed": True, "internalType": "address", "name": "removedOwner", "type": "address" }],
-    "anonymous": False
-  },
-  {
-    "type": "event",
-    "name": "ProposalCreated",
-    "inputs": [
-      { "indexed": True, "internalType": "uint256", "name": "proposalId", "type": "uint256" },
-      { "indexed": True, "internalType": "address", "name": "proposer", "type": "address" },
-      { "indexed": True, "internalType": "address", "name": "to", "type": "address" },
-      { "indexed": False, "internalType": "uint256", "name": "value", "type": "uint256" }
-    ],
-    "anonymous": False
-  },
-  {
-    "type": "event",
-    "name": "ThresholdChanged",
-    "inputs": [{ "indexed": False, "internalType": "uint256", "name": "newThreshold", "type": "uint256" }],
-    "anonymous": False
-  }
+    # Constructor
+    {
+        "type": "constructor",
+        "inputs": [
+            { "internalType": "address[]", "name": "_owners", "type": "address[]" },
+            { "internalType": "uint256", "name": "_threshold", "type": "uint256" }
+        ],
+        "stateMutability": "payable"
+    },
+    # Receive function (allows the contract to receive ETH)
+    {
+        "type": "receive",
+        "stateMutability": "payable"
+    },
+    # -----------------------------------------------------------
+    # Core Proposal Functions
+    # -----------------------------------------------------------
+    # proposeTransaction: Propose a single transaction
+    {
+        "type": "function",
+        "name": "proposeTransaction",
+        "inputs": [
+            { "internalType": "address", "name": "to", "type": "address" },
+            { "internalType": "uint256", "name": "value", "type": "uint256" },
+            { "internalType": "bytes", "name": "data", "type": "bytes" }
+        ],
+        "outputs": [{ "internalType": "uint256", "name": "", "type": "uint256" }],
+        "stateMutability": "nonpayable"
+    },
+    # confirmTransaction: Confirm a proposal
+    {
+        "type": "function",
+        "name": "confirmTransaction",
+        "inputs": [{ "internalType": "uint256", "name": "proposalId", "type": "uint256" }],
+        "outputs": [],
+        "stateMutability": "nonpayable"
+    },
+    # executeTransaction: Execute a confirmed proposal
+    {
+        "type": "function",
+        "name": "executeTransaction",
+        "inputs": [{ "internalType": "uint256", "name": "proposalId", "type": "uint256" }],
+        "outputs": [],
+        "stateMutability": "nonpayable"
+    },
+    # batchPropose: Create multiple proposals in one transaction
+    {
+        "type": "function",
+        "name": "batchPropose",
+        "inputs": [
+            { "internalType": "address[]", "name": "tos", "type": "address[]" },
+            { "internalType": "uint256[]", "name": "values", "type": "uint256[]" },
+            { "internalType": "bytes[]", "name": "datas", "type": "bytes[]" }
+        ],
+        "outputs": [],
+        "stateMutability": "nonpayable"
+    },
+    # batchConfirm: Confirm multiple proposals in one transaction
+    {
+        "type": "function",
+        "name": "batchConfirm",
+        "inputs": [{ "internalType": "uint256[]", "name": "ids", "type": "uint256[]" }],
+        "outputs": [],
+        "stateMutability": "nonpayable"
+    },
+    # batchExecute: Execute multiple proposals in one transaction
+    {
+        "type": "function",
+        "name": "batchExecute",
+        "inputs": [{ "internalType": "uint256[]", "name": "ids", "type": "uint256[]" }],
+        "outputs": [],
+        "stateMutability": "nonpayable"
+    },
+    # -----------------------------------------------------------
+    # Governance/Owner Functions (usually propose/confirm/execute flow)
+    # -----------------------------------------------------------
+    {
+        "type": "function",
+        "name": "addOwner",
+        "inputs": [{ "internalType": "address", "name": "newOwner", "type": "address" }],
+        "outputs": [],
+        "stateMutability": "nonpayable"
+    },
+    {
+        "type": "function",
+        "name": "removeOwner",
+        "inputs": [{ "internalType": "address", "name": "owner", "type": "address" }],
+        "outputs": [],
+        "stateMutability": "nonpayable"
+    },
+    {
+        "type": "function",
+        "name": "changeThreshold",
+        "inputs": [{ "internalType": "uint256", "name": "newThreshold", "type": "uint256" }],
+        "outputs": [],
+        "stateMutability": "nonpayable"
+    },
+    {
+        "type": "function",
+        "name": "cancelTransaction",
+        "inputs": [{ "internalType": "uint256", "name": "proposalId", "type": "uint256" }],
+        "outputs": [],
+        "stateMutability": "nonpayable"
+    },
+    # -----------------------------------------------------------
+    # View/Utility Functions
+    # -----------------------------------------------------------
+    # getOwners: Returns the list of all owners
+    {
+        "type": "function",
+        "name": "getOwners",
+        "inputs": [],
+        "outputs": [{ "internalType": "address[]", "name": "", "type": "address[]" }],
+        "stateMutability": "view"
+    },
+    # isOwner: Check if an address is an owner
+    {
+        "type": "function",
+        "name": "isOwner",
+        "inputs": [{ "internalType": "address", "name": "", "type": "address" }],
+        "outputs": [{ "internalType": "bool", "name": "", "type": "bool" }],
+        "stateMutability": "view"
+    },
+    # getProposal: Returns the state of a specific proposal (using ProposalMeta struct)
+    {
+        "type": "function",
+        "name": "getProposal",
+        "inputs": [{ "internalType": "uint256", "name": "proposalId", "type": "uint256" }],
+        "outputs": [
+            { "internalType": "address", "name": "proposer", "type": "address" },
+            { "internalType": "address", "name": "to", "type": "address" },
+            { "internalType": "uint256", "name": "value", "type": "uint256" },
+            { "internalType": "bytes32", "name": "dataHash", "type": "bytes32" }, # SecureMultiSig stores hash
+            { "internalType": "uint256", "name": "confirmations_", "type": "uint256" },
+            { "internalType": "bool", "name": "executed", "type": "bool" },
+            { "internalType": "uint256", "name": "createdAt", "type": "uint256" },
+            { "internalType": "uint256", "name": "executeAfter", "type": "uint256" } # New field for timelock
+        ],
+        "stateMutability": "view"
+    },
+    # proposals: Direct storage accessor for ProposalMeta struct (index access)
+    {
+        "type": "function",
+        "name": "proposals",
+        "inputs": [{ "internalType": "uint256", "name": "", "type": "uint256" }],
+        "outputs": [
+            { "internalType": "address", "name": "proposer", "type": "address" },
+            { "internalType": "address", "name": "to", "type": "address" },
+            { "internalType": "uint256", "name": "value", "type": "uint256" },
+            { "internalType": "bytes32", "name": "dataHash", "type": "bytes32" }, # SecureMultiSig stores hash
+            { "internalType": "uint256", "name": "confirmations", "type": "uint256" },
+            { "internalType": "bool", "name": "executed", "type": "bool" },
+            { "internalType": "uint256", "name": "createdAt", "type": "uint256" },
+            { "internalType": "uint256", "name": "executeAfter", "type": "uint256" } # New field for timelock
+        ],
+        "stateMutability": "view"
+    },
+    # proposalCount: Current number of proposals
+    {
+        "type": "function",
+        "name": "proposalCount",
+        "inputs": [],
+        "outputs": [{ "internalType": "uint256", "name": "", "type": "uint256" }],
+        "stateMutability": "view"
+    },
+    # withdrawDeferred: Secure function to implement pull-payment pattern
+    {
+        "type": "function",
+        "name": "withdrawDeferred",
+        "inputs": [],
+        "outputs": [],
+        "stateMutability": "nonpayable"
+    },
+    # -----------------------------------------------------------
+    # Events
+    # -----------------------------------------------------------
+    {
+        "type": "event",
+        "name": "ProposalCreated",
+        "inputs": [
+            { "indexed": True, "internalType": "uint256", "name": "proposalId", "type": "uint256" },
+            { "indexed": True, "internalType": "address", "name": "proposer", "type": "address" },
+            { "indexed": True, "internalType": "address", "name": "to", "type": "address" },
+            { "indexed": False, "internalType": "uint256", "name": "value", "type": "uint256" },
+            { "indexed": False, "internalType": "bytes32", "name": "dataHash", "type": "bytes32" }
+        ],
+        "anonymous": False
+    },
+    {
+        "type": "event",
+        "name": "ThresholdChanged",
+        "inputs": [{ "indexed": False, "internalType": "uint256", "name": "newThreshold", "type": "uint256" }],
+        "anonymous": False
+    },
+    # Note: Confirmed and Executed events are typically present but omitted for brevity if not strictly needed
 ]
+
 
 # --- HELPER FUNCTION ---
 

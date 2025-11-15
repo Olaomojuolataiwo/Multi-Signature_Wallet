@@ -1,4 +1,3 @@
-
 # t03_execution_safety_runner.py
 # Test runner / orchestration script. Assumes attacker contracts were deployed separately
 # and their addresses exported into environment variables.
@@ -79,20 +78,6 @@ MIN_ABI = [
     {'inputs':[],'stateMutability':'view','name':'proposalCount','outputs':[{'internalType':'uint256','name':'','type':'uint256'}],'type':'function'}
 ]
 
-vuln = w3.eth.contract(address=Web3.to_checksum_address(VULNERABLE_ADDRESS), abi=MIN_ABI)
-secure = w3.eth.contract(address=Web3.to_checksum_address(SECURE_ADDRESS), abi=MIN_ABI)
-
-# Attacker contracts ABIs (only needed to call setProposalId or withdraw)
-REENTRANCY_ABI = [
-    {'inputs':[{'internalType':'uint256','name':'id','type':'uint256'}],'name':'setProposalId','outputs':[],'stateMutability':'nonpayable','type':'function'},
-    {'inputs':[{'internalType':'address','name':'to','type':'address'}],'name':'withdraw','outputs':[],'stateMutability':'nonpayable','type':'function'}
-]
-
-SINKHOLE_ABI = [
-    {"inputs":[{"internalType":"address","name":"to","type":"address"}],"name":"implode","outputs":[],"stateMutability":"payable","type":"function"},
-    {"inputs":[],"name":"implodeBurn","outputs":[],"stateMutability":"payable","type":"function"},
-]
-
 VUL_MULTISIG_ABI_PATH = "../out/VulnerableMultiSig.sol/VulnerableMultiSig.json"
 SEC_MULTISIG_ABI_PATH = "../out/SecureMultiSig.sol/SecureMultiSig.json"
 REENTRANCY_ABI_PATH = "../out/ReentrancyAttacker.sol/ReentrancyAttacker.json"
@@ -168,17 +153,6 @@ def batch_propose_and_get_pids(contract, proposer_acct: Account, tos, vals, data
     pc_before = contract.functions.proposalCount().call()
     # choose batch or fallback
     if has_batch_fn(contract, "batchPropose"):
-        # --- ADDED DEBUG STEP ---
-        # 1. Confirm the type of the argument
-        print(f"\n[DEBUG] Proposer Acct Type: {type(proposer_acct)}")
-        
-        # 2. Safely print the address being used to build the transaction
-        if hasattr(proposer_acct, 'address'):
-            print(f"[DEBUG] Address used in TX: {proposer_acct.address}")
-        else:
-            # If the object was corrupted to a string, this will fire
-            print(f"[DEBUG] ERROR: Account object missing .address attribute! Value: {proposer_acct}")
-        # ------------------------
         fn = contract.functions.batchPropose(tos, vals, datas_clean)
         tx = fn.build_transaction({"from": proposer_acct.address, "chainId": chain_id})
         txh, rec = sign_send(w3, proposer_acct, tx, nonce_manager=nonce_manager, wait_receipt=True)
@@ -201,22 +175,6 @@ def batch_confirm(contract, confirmer_acct, pids_list, nonce_manager):
     if not pids_list:
         return None, None
     if has_batch_fn(contract, "batchConfirm"):
-        
-        # --- START Nonce Diagnostic Insertion ---
-        network_nonce = w3.eth.get_transaction_count(confirmer_acct.address)
-        print(f"\n--- ⚙️ Nonce Check for {confirmer_acct.address} ---")
-        print(f"1. On-Chain Nonce (Expected Next Nonce): {network_nonce}")
-
-        # Note: The way the nonce_manager exposes its next nonce may vary.
-        # You may need to replace 'nonce_manager.current_nonce' with the actual attribute 
-        # or method (e.g., nonce_manager.peek_nonce() or nonce_manager.next_nonce) 
-        # based on your specific implementation.
-        proposed_nonce = nonce_manager.peek()
-        print(f"2. Nonce Manager's Proposed Nonce: {proposed_nonce}")
-        print(f"--- End Nonce Check ---\n")
-        # --- END Nonce Diagnostic Insertion ---
-
-        fn = contract.functions.batchConfirm(pids_list)
         tx = fn.build_transaction({"from": confirmer_acct.address, "chainId": chain_id})
         txh, rec = sign_send(w3, confirmer_acct, tx, nonce_manager=nonce_manager, wait_receipt=True)
         dump_tx_artifact("batch_confirm_tx", txh, rec)
@@ -364,17 +322,6 @@ def sign_send(w3, acct: Account, tx_dict: dict, nonce_manager: NonceManager = No
         return txh, rec
     return txh, None
 
-def replace_tx(w3, acct, original_tx_dict, nonce, reason="replace"):
-    # clone and bump fees
-    tx = original_tx_dict.copy()
-    tx["nonce"] = nonce
-    tx["gas"] = tx.get("gas", DEFAULT_GAS_LIMIT)
-    fees = build_fee_params(w3, priority_gwei=REPLACE_PRIORITY_FEE_GWEI)
-    tx.update(fees)
-    signed = acct.sign_transaction(tx)
-    txh, rec = send_signed_raw_and_wait(w3, signed.raw_transaction, timeout=RECEIPT_TIMEOUT)
-    return txh, rec
-
 def eth(n):
     return Decimal(w3.from_wei(n, 'ether'))
 
@@ -398,22 +345,10 @@ def send_tx_signed(account: Account, tx):
     rec = w3.eth.wait_for_transaction_receipt(txh)
     return txh.hex(), rec
 
-def build_and_send(account: Account, to, data=b'', value=0, gas=2_000_000):
-    tx = {
-        'to': to,
-        'value': int(value),
-        'data': data,
-        'gas': gas,
-        'gasPrice': GAS_PRICE,
-        'nonce': w3.eth.get_transaction_count(account.address),
-        'chainId': chain_id
-    }
-    return send_tx_signed(account, tx)
-
-def call_propose(contract, owner: Account, to_addr, value_eth: Decimal, data: bytes = b''):
+def call_propose(contract, owner: Account, to_addr, value_eth: Decimal, data: bytes = b'', nonce_manager=None):
     fn = contract.functions.proposeTransaction(to_addr, to_wei_eth(value_eth), data)
-    tx = fn.build_transaction({'from': owner.address, 'nonce': w3.eth.get_transaction_count(owner.address), 'gas': 400_000, 'gasPrice': GAS_PRICE, 'chainId': chain_id})
-    return send_tx_signed(owner, tx)
+    tx = fn.build_transaction({'from': owner.address, 'nonce': w3.eth.get_transaction_count(owner.address), 'gas': 1_400_000, 'gasPrice': GAS_PRICE, 'chainId': chain_id})
+    return sign_send(w3, owner, tx, nonce_manager=nonce_manager)
 
 def call_confirm(contract, owner: Account, pid):
     fn = contract.functions.confirmTransaction(pid)
@@ -479,7 +414,6 @@ def deploy_and_implode_sinkhole(deployer_account: Account, recipient_address: st
     # 1. Instantiate the Deployer Factory (Bytecode is now a simple string)
     DeployerContract = w3.eth.contract(abi=EPHEMERAL_DEPLOYER_ABI, bytecode=EPHEMERAL_DEPLOYER_BYTECODE)
     current_nonce = w3.eth.get_transaction_count(deployer_account.address)
-    print(f"[DEBUG] Starting nonce: {current_nonce}")
 
     # 2. Deploy the EphemeralDeployer contract itself
     tx_deploy_data = DeployerContract.constructor().build_transaction({
@@ -504,14 +438,6 @@ def deploy_and_implode_sinkhole(deployer_account: Account, recipient_address: st
         'gasPrice': GAS_PRICE, 
         'chainId': chain_id
     })
-    print("[DEBUG] Prepared deployAndImplode TX:")
-    print("  From:", deployer_account.address)
-    print("  Nonce:", tx_implode_data['nonce'])
-    print("  Gas:", tx_implode_data['gas'])
-    print("  Gas Price:", tx_implode_data['gasPrice'])
-    print("  Chain ID:", tx_implode_data['chainId'])
-    print("  Recipient:", recipient_address)
-
     txh_implode, rec_implode = send_tx_signed(deployer_account, tx_implode_data)
     print("Broadcasted TX:", txh_implode)
 
@@ -653,213 +579,208 @@ for oi in owners_info:
 summary = {'reentrancy': {}, 'unchecked_external': {}, 'batch': {}}
 
 # ---------------------------------
-
 #        REENTRANCY TEST
-
 # ---------------------------------
 
 # ---------------------------------
-
 #   ATTACK EXECUTION (VULNERABLE)
-
 # ---------------------------------
 
-#log_step('REENTRANCY TEST (Vulnerable)')
+log_step('REENTRANCY TEST (Vulnerable)')
 
 # --- 1) Propose tx sending TARGET_X_ETH to the attacker contract ---
-#print('Proposing transaction (Vulnerable -> attacker)')
-#txh_prop, rec_prop = call_propose(vuln, owner_accounts[0], REENTRANCY_ATTACKER_ADDRESS, TARGET_X_ETH)
-#print('Propose tx:', txh_prop)
-#dump_tx_artifact('vul_reentrancy_propose', txh_prop, rec_prop)
+print('Proposing transaction (Vulnerable -> attacker)')
+vuln_proposer_acct = owner_accounts[0]
+vuln_nonce_manager = NonceManager(w3, vuln_proposer_acct.address)
+txh_prop, rec_prop = call_propose(vuln, vuln_proposer_acct, REENTRANCY_ATTACKER_ADDRESS, TARGET_X_ETH, nonce_manager = vuln_nonce_manager)
+print('Propose tx:', txh_prop)
+dump_tx_artifact('vul_reentrancy_propose', txh_prop, rec_prop)
 
 # --- 2) Derive the proposal id (proposalCount - 1) ---
-#try:
-#    pc = vuln.functions.proposalCount().call()
-#    pid = pc - 1
-#except Exception:
-#    pid = 0
-#print('Derived proposal id:', pid)
+try:
+    pc = vuln.functions.proposalCount().call()
+    pid = pc - 1
+except Exception:
+    pid = 0
+print('Derived proposal id:', pid)
 
 # --- 3) IMPORTANT: set the proposal id on the attacker BEFORE execution ---
-#print('Setting proposalId on attacker contract (must be done before execute)')
-#tx_set = re_att.functions.setProposalId(pid).build_transaction({
-#    'from': attacker_account.address,
-#    'nonce': w3.eth.get_transaction_count(attacker_account.address),
-#    'gas': 120000,
-#    'gasPrice': GAS_PRICE,
-#    'chainId': chain_id
-#})
-#txh_set, rec_set = send_tx_signed(attacker_account, tx_set)
-#print('Set proposalId tx:', txh_set)
-#dump_tx_artifact('attacker_setProposalId', txh_set, rec_set)
+print('Setting proposalId on attacker contract (must be done before execute)')
+tx_set = re_att.functions.setProposalId(pid).build_transaction({
+    'from': attacker_account.address,
+    'nonce': w3.eth.get_transaction_count(attacker_account.address),
+    'gas': 120000,
+    'gasPrice': GAS_PRICE,
+    'chainId': chain_id
+})
+txh_set, rec_set = send_tx_signed(attacker_account, tx_set)
+print('Set proposalId tx:', txh_set)
+dump_tx_artifact('attacker_setProposalId', txh_set, rec_set)
 
 # --- 4) Confirm the proposal with the other owners so it becomes executable ---
-#print('Confirming transaction with required owners')
-#for i, acct in enumerate(owners[1:3], start=1):
-#    txh_c, rec_c = call_confirm(vuln, get_owner_account(i), pid)
-#    print(f'Confirm tx ({i}):', txh_c)
-#    dump_tx_artifact(f'vul_reentrancy_confirm_{i}', txh_c, rec_c)
+print('Confirming transaction with required owners')
+for i, acct in enumerate(owners[1:3], start=1):
+    txh_c, rec_c = call_confirm(vuln, get_owner_account(i), pid)
+    print(f'Confirm tx ({i}):', txh_c)
+    dump_tx_artifact(f'vul_reentrancy_confirm_{i}', txh_c, rec_c)
 
 # --- 5) Record balances BEFORE execute (exact wei) for evidence ---
-#vuln_before = w3.eth.get_balance(VULNERABLE_ADDRESS)
-#att_before = w3.eth.get_balance(REENTRANCY_ATTACKER_ADDRESS)
-#print(f'Balances before execute: Vulnerable={eth(vuln_before)} ETH, Attacker={eth(att_before)} ETH')
+vuln_before = w3.eth.get_balance(VULNERABLE_ADDRESS)
+att_before = w3.eth.get_balance(REENTRANCY_ATTACKER_ADDRESS)
+print(f'Balances before execute: Vulnerable={eth(vuln_before)} ETH, Attacker={eth(att_before)} ETH')
 
 # --- 6) Execute the proposal (this will call the attacker and potentially re-enter) ---
-#print('Executing proposal (this triggers the attack if vulnerable)')
-#txh_exec, rec_exec = call_execute(vuln, owner_accounts[0], pid, gas=2_500_000)
-#print('Execute tx:', txh_exec)
-#dump_tx_artifact('vul_reentrancy_execute', txh_exec, rec_exec)
+print('Executing proposal (this triggers the attack if vulnerable)')
+txh_exec, rec_exec = call_execute(vuln, owner_accounts[0], pid, gas=2_500_000)
+print('Execute tx:', txh_exec)
+dump_tx_artifact('vul_reentrancy_execute', txh_exec, rec_exec)
 
 # --- 7) Record balances AFTER execute (exact wei) ---
-#vuln_after = w3.eth.get_balance(VULNERABLE_ADDRESS)
-#att_after = w3.eth.get_balance(REENTRANCY_ATTACKER_ADDRESS)
-#print(f'Balances after execute: Vulnerable={eth(vuln_after)} ETH, Attacker={eth(att_after)} ETH')
+vuln_after = w3.eth.get_balance(VULNERABLE_ADDRESS)
+att_after = w3.eth.get_balance(REENTRANCY_ATTACKER_ADDRESS)
+print(f'Balances after execute: Vulnerable={eth(vuln_after)} ETH, Attacker={eth(att_after)} ETH')
 
 # --- 8) Compute deltas in wei (safe integer arithmetic) ---
-#attacker_delta_wei = int(att_after - att_before)
-#vulnerable_delta_wei = int(vuln_before - vuln_after)
+attacker_delta_wei = int(att_after - att_before)
+vulnerable_delta_wei = int(vuln_before - vuln_after)
 
-#print(f'  Attacker delta: {attacker_delta_wei} wei ({eth(attacker_delta_wei)} ETH)')
-#print(f'  Vulnerable delta: {vulnerable_delta_wei} wei ({eth(vulnerable_delta_wei)} ETH)')
+print(f'  Attacker delta: {attacker_delta_wei} wei ({eth(attacker_delta_wei)} ETH)')
+print(f'  Vulnerable delta: {vulnerable_delta_wei} wei ({eth(vulnerable_delta_wei)} ETH)')
 
 # --- 9) Success criteria (convert TARGET_X_ETH to wei for comparison) ---
-#target_wei = to_wei_eth(TARGET_X_ETH)
+target_wei = to_wei_eth(TARGET_X_ETH)
 
 # Double-dip success: attacker got >= 2 * target
-#if attacker_delta_wei > target_wei:
-#    print('RESULT: Expected Scenario Outcome — attacker received >= 2 * TARGET_X_ETH (double-dip).')
-#    summary['reentrancy']['result'] = 'SUCCESS_DOUBLE_DIP'
+if attacker_delta_wei > target_wei:
+    print('RESULT: Expected Scenario Outcome — attacker received >= 2 * TARGET_X_ETH (double-dip).')
+    summary['reentrancy']['result'] = 'SUCCESS_DOUBLE_DIP'
 # Single transfer: attacker got exactly target or roughly that (allow small gas-related noise)
-#elif attacker_delta_wei == target_wei:
-#    print('RESULT: Unexpectd Scenario Outcome — attacker received ~TARGET_X_ETH (no double-dip).')
-#    summary['reentrancy']['result'] = 'SINGLE_TRANSFER_OR_PARTIAL'
-#else:
-#    print('RESULT: Unexpected Scenario FAILURE — attacker received no (or negligible) funds.')
-#    summary['reentrancy']['result'] = 'NO_FUNDS'
+elif attacker_delta_wei == target_wei:
+    print('RESULT: Unexpectd Scenario Outcome — attacker received ~TARGET_X_ETH (no double-dip).')
+    summary['reentrancy']['result'] = 'SINGLE_TRANSFER_OR_PARTIAL'
+else:
+    print('RESULT: Unexpected Scenario FAILURE — attacker received no (or negligible) funds.')
+    summary['reentrancy']['result'] = 'NO_FUNDS'
 
 # store details for artifacts
-#summary['reentrancy'].update({
-#    'vulnerable_before_wei': int(vuln_before),
-#    'vulnerable_after_wei': int(vuln_after),
-#    'attacker_before_wei': int(att_before),
-#    'attacker_after_wei': int(att_after),
-#    'attacker_delta_wei': attacker_delta_wei,
-#    'vulnerable_delta_wei': vulnerable_delta_wei,
-#    'execute_tx': txh_exec,
-#    'propose_tx': txh_prop,
-#    'setProposalId_tx': txh_set,
-#    'confirm_txs': []  # optionally append the confirm txs if you want them tracked
-#})
-
-# (optional) Collect confirms into summary['reentrancy']['confirm_txs'] if desired
+summary['reentrancy'].update({
+    'vulnerable_before_wei': int(vuln_before),
+    'vulnerable_after_wei': int(vuln_after),
+    'attacker_before_wei': int(att_before),
+    'attacker_after_wei': int(att_after),
+    'attacker_delta_wei': attacker_delta_wei,
+    'vulnerable_delta_wei': vulnerable_delta_wei,
+    'execute_tx': txh_exec,
+    'propose_tx': txh_prop,
+    'setProposalId_tx': txh_set,
+    'confirm_txs': []
+})
 
 # Reset Reentrancy Contract State to allow further attacks using withdraw function
-#log_step('RESET ATTACKER STATE')
-#print('Withdrawing funds from attacker contract (resets reentered=false)')
+log_step('RESET ATTACKER STATE')
+print('Withdrawing funds from attacker contract (resets reentered=false)')
 
-#txh_withdraw, rec_withdraw = call_withdraw_attacker(re_att, attacker_account, attacker_account.address)
-#print('Withdraw tx:', txh_withdraw)
-#dump_tx_artifact('attacker_withdraw_reset', txh_withdraw, rec_withdraw)
+txh_withdraw, rec_withdraw = call_withdraw_attacker(re_att, attacker_account, attacker_account.address)
+print('Withdraw tx:', txh_withdraw)
+dump_tx_artifact('attacker_withdraw_reset', txh_withdraw, rec_withdraw)
 
 
 # ---------------------------------
-
 #   MITIGATION EXECUTION (SECURE)
-
 # ---------------------------------
 
-# --- REENTRANCY TEST (Secure) ----
 
-#log_step('REENTRANCY TEST (Secure)')
+log_step('REENTRANCY TEST (Secure)')
 
 # --- 1) Propose tx sending TARGET_X_ETH to the attacker contract (on Secure wallet) ---
-#print('Proposing transaction (Secure -> attacker)')
-#txh_prop_s, rec_prop_s = call_propose(secure, owner_accounts[0], REENTRANCY_ATTACKER_ADDRESS, TARGET_X_ETH)
-#print('Propose tx:', txh_prop_s)
-#dump_tx_artifact('sec_reentrancy_propose', txh_prop_s, rec_prop_s)
+print('Proposing transaction (Secure -> attacker)')
+sec_proposer_acct = owner_accounts[0]
+sec_nonce_manager = NonceManager(w3, sec_proposer_acct.address)
+txh_prop_s, rec_prop_s = call_propose(secure, sec_proposer_acct, REENTRANCY_ATTACKER_ADDRESS, TARGET_X_ETH, nonce_manager = sec_nonce_manager)
+print('Propose tx:', txh_prop_s)
+dump_tx_artifact('sec_reentrancy_propose', txh_prop_s, rec_prop_s)
 
 # --- 2) Derive the proposal id (proposalCount - 1) ---
-#try:
-#    pc_s = secure.functions.proposalCount().call()
-#    pid_s = pc_s - 1
-#except Exception:
-#    pid_s = 0
-#print('Derived proposal id (secure):', pid_s)
+try:
+    pc_s = secure.functions.proposalCount().call()
+    pid_s = pc_s - 1
+except Exception:
+    pid_s = 0
+print('Derived proposal id (secure):', pid_s)
 
 # --- 3) IMPORTANT: set the proposal id on the attacker BEFORE execution ---
-#print('Setting proposalId on attacker contract (for secure test)')
-#tx_set_s = re_att.functions.setProposalId(pid_s).build_transaction({
-#    'from': attacker_account.address,
-#    'nonce': w3.eth.get_transaction_count(attacker_account.address),
-#    'gas': 120000,
-#    'gasPrice': GAS_PRICE,
-#    'chainId': chain_id
-#})
-#txh_set_s, rec_set_s = send_tx_signed(attacker_account, tx_set_s)
-#print('Set proposalId tx (secure):', txh_set_s)
-#dump_tx_artifact('attacker_setProposalId_secure', txh_set_s, rec_set_s)
+print('Setting proposalId on attacker contract (for secure test)')
+tx_set_s = re_att.functions.setProposalId(pid_s).build_transaction({
+    'from': attacker_account.address,
+    'nonce': w3.eth.get_transaction_count(attacker_account.address),
+    'gas': 120000,
+    'gasPrice': GAS_PRICE,
+    'chainId': chain_id
+})
+txh_set_s, rec_set_s = send_tx_signed(attacker_account, tx_set_s)
+print('Set proposalId tx (secure):', txh_set_s)
+dump_tx_artifact('attacker_setProposalId_secure', txh_set_s, rec_set_s)
 
 # --- 4) Confirm the proposal with the other owners so it becomes executable ---
-#print('Confirming transaction (secure) with required owners')
-#confirm_txs_secure = []
-#for i, acct in enumerate(owners[1:3], start=1):
-#    txh_c_s, rec_c_s = call_confirm(secure, get_owner_account(i), pid_s)
-#    confirm_txs_secure.append(txh_c_s)
-#    print(f'Confirm tx (secure {i}):', txh_c_s)
-#    dump_tx_artifact(f'sec_reentrancy_confirm_{i}', txh_c_s, rec_c_s)
+print('Confirming transaction (secure) with required owners')
+confirm_txs_secure = []
+for i, acct in enumerate(owners[1:3], start=1):
+    txh_c_s, rec_c_s = call_confirm(secure, get_owner_account(i), pid_s)
+    confirm_txs_secure.append(txh_c_s)
+    print(f'Confirm tx (secure {i}):', txh_c_s)
+    dump_tx_artifact(f'sec_reentrancy_confirm_{i}', txh_c_s, rec_c_s)
 
 # --- 5) Record balances BEFORE execute (exact wei) for evidence ---
-#sec_before_r = w3.eth.get_balance(SECURE_ADDRESS)
-#att_before_r = w3.eth.get_balance(REENTRANCY_ATTACKER_ADDRESS)
-#print(f'Balances before execute (secure): Secure={eth(sec_before_r)} ETH, Attacker={eth(att_before_r)} ETH')
+sec_before_r = w3.eth.get_balance(SECURE_ADDRESS)
+att_before_r = w3.eth.get_balance(REENTRANCY_ATTACKER_ADDRESS)
+print(f'Balances before execute (secure): Secure={eth(sec_before_r)} ETH, Attacker={eth(att_before_r)} ETH')
 
 # --- 6) Execute the proposal (this will call the attacker; Secure should block re-entry) ---
-#print('Executing proposal (secure) — should be protected against reentrancy')
-#txh_exec_s, rec_exec_s = call_execute(secure, owner_accounts[0], pid_s, gas=2_500_000)
-#print('Execute tx (secure):', txh_exec_s)
-#dump_tx_artifact('sec_reentrancy_execute', txh_exec_s, rec_exec_s)
+print('Executing proposal (secure) — should be protected against reentrancy')
+txh_exec_s, rec_exec_s = call_execute(secure, owner_accounts[0], pid_s, gas=2_500_000)
+print('Execute tx (secure):', txh_exec_s)
+dump_tx_artifact('sec_reentrancy_execute', txh_exec_s, rec_exec_s)
 
 # --- 7) Record balances AFTER execute (exact wei) ---
-#sec_after_r = w3.eth.get_balance(SECURE_ADDRESS)
-#att_after_r = w3.eth.get_balance(REENTRANCY_ATTACKER_ADDRESS)
-#print(f'Balances after execute (secure): Secure={eth(sec_after_r)} ETH, Attacker={eth(att_after_r)} ETH')
+sec_after_r = w3.eth.get_balance(SECURE_ADDRESS)
+att_after_r = w3.eth.get_balance(REENTRANCY_ATTACKER_ADDRESS)
+print(f'Balances after execute (secure): Secure={eth(sec_after_r)} ETH, Attacker={eth(att_after_r)} ETH')
 
 # --- 8) Compute deltas in wei (safe integer arithmetic) ---
-#attacker_delta_wei_s = int(att_after_r - att_before_r)
-#secure_delta_wei = int(sec_before_r - sec_after_r)
+attacker_delta_wei_s = int(att_after_r - att_before_r)
+secure_delta_wei = int(sec_before_r - sec_after_r)
 
-#print(f'  Attacker delta (secure): {attacker_delta_wei_s} wei ({eth(attacker_delta_wei_s)} ETH)')
-#print(f'  Secure delta: {secure_delta_wei} wei ({eth(secure_delta_wei)} ETH)')
+print(f'  Attacker delta (secure): {attacker_delta_wei_s} wei ({eth(attacker_delta_wei_s)} ETH)')
+print(f'  Secure delta: {secure_delta_wei} wei ({eth(secure_delta_wei)} ETH)')
 
 # --- 9) Success criteria for Secure: attacker MUST NOT receive >= TARGET_X_ETH ---
-#target_wei = to_wei_eth(TARGET_X_ETH)
-#if attacker_delta_wei_s > target_wei:
+target_wei = to_wei_eth(TARGET_X_ETH)
+if attacker_delta_wei_s > target_wei:
     # attacker got at least the transfer — this is a failure of the secure contract
-#    print('Unexpected Scenario Outcome: FAILURE — attacker received funds on Secure wallet (vulnerable behavior!).')
-#    summary['reentrancy']['secure_result'] = 'FAILURE_ATTACKER_RECEIVED_FUNDS'
-#elif attacker_delta_wei_s == target_wei:
-    # secure contract prevented reentrancy (expected)
-#    print('UnExpected Scenario Outcome: FAILURE — Secure Contract Atomic Execution guard failed and initial recieve transaction call successful (reentrancy not mitigated as designed).')
-#    summary['reentrancy']['secure_result'] = 'FAILURE_ATTACKER_RECEIVED_FUNDS'
-#else:
-#    print('Expected Scenario Outcome: NO FUNDS WERE TRANSFERRED') 
-#    summary['reentrancy']['secure_result'] = 'PASS_NO_FUNDS'
+    print('Unexpected Scenario Outcome: FAILURE — attacker received funds on Secure wallet (vulnerable behavior!).')
+    summary['reentrancy']['secure_result'] = 'FAILURE_ATTACKER_RECEIVED_FUNDS'
+elif attacker_delta_wei_s == target_wei:
+    # secure contract partially prevented reentrancy (unexpected)
+    print('UnExpected Scenario Outcome: FAILURE — Secure Contract Atomic Execution guard failed and initial recieve transaction call successful (reentrancy not mitigated as designed).')
+    summary['reentrancy']['secure_result'] = 'FAILURE_ATTACKER_RECEIVED_FUNDS'
+else:
+    print('Expected Scenario Outcome: NO FUNDS WERE TRANSFERRED') 
+    summary['reentrancy']['secure_result'] = 'PASS_NO_FUNDS'
 
 # store details for artifacts
-#summary['reentrancy'].setdefault('secure', {})
-#summary['reentrancy']['secure'].update({
-#    'secure_before_wei': int(sec_before_r),
-#    'secure_after_wei': int(sec_after_r),
-#    'attacker_before_wei': int(att_before_r),
-#    'attacker_after_wei': int(att_after_r),
-#    'attacker_delta_wei': attacker_delta_wei_s,
-#    'secure_delta_wei': secure_delta_wei,
-#    'execute_tx': txh_exec_s,
-#    'propose_tx': txh_prop_s,
-#    'setProposalId_tx': txh_set_s,
-#    'confirm_txs': confirm_txs_secure
-#})
+summary['reentrancy'].setdefault('secure', {})
+summary['reentrancy']['secure'].update({
+    'secure_before_wei': int(sec_before_r),
+    'secure_after_wei': int(sec_after_r),
+    'attacker_before_wei': int(att_before_r),
+    'attacker_after_wei': int(att_after_r),
+    'attacker_delta_wei': attacker_delta_wei_s,
+    'secure_delta_wei': secure_delta_wei,
+    'execute_tx': txh_exec_s,
+    'propose_tx': txh_prop_s,
+    'setProposalId_tx': txh_set_s,
+    'confirm_txs': confirm_txs_secure
+})
 
 # --------------------------------------
 #     UNECHECKED EXTERNAL CALL (RECIEVE)
@@ -869,94 +790,98 @@ summary = {'reentrancy': {}, 'unchecked_external': {}, 'batch': {}}
 #   ATTACK EXECUTION (VULNERABLE)
 # ---------------------------------
 
-#log_step('UNCHECKED EXTERNAL CALL (Vulnerable)')
+log_step('UNCHECKED EXTERNAL CALL (Vulnerable)')
 
-#EXEC_INDEX = 5
+EXEC_INDEX = 5
 # --- 1) Propose tx sending TARGET_X_ETH to the attacker contract (on Vulnerable wallet) ---
-#print('Proposing transaction (Vulnerable -> attacker)')
-#txh_prop, rec_prop = call_propose(vuln, owner_accounts[0], SINKHOLE_ADDRESS, TARGET_X_ETH)
-#print('Propose tx:', txh_prop); dump_tx_artifact('vul_sink_propose', txh_prop, rec_prop)
+print('Proposing transaction (Vulnerable -> attacker)')
+vuln_proposer_acct = owner_accounts[0]
+vuln_nonce_manager = NonceManager(w3, vuln_proposer_acct.address)
+txh_prop, rec_prop = call_propose(vuln, vuln_proposer_acct, SINKHOLE_ADDRESS, TARGET_X_ETH, nonce_manager = vuln_nonce_manager)
+print('Propose tx:', txh_prop); dump_tx_artifact('vul_sink_propose', txh_prop, rec_prop)
 
 # --- 2) Derive the proposal id (proposalCount - 1) ---
-#print('Deriving the proposal id')
-#try:
-#    pc = vuln.functions.proposalCount().call(); pid = pc - 1
-#except Exception:
-#    pid = 0
-#print('Derived proposal id (vulnerable):', pid)
+print('Deriving the proposal id')
+try:
+    pc = vuln.functions.proposalCount().call(); pid = pc - 1
+except Exception:
+    pid = 0
+print('Derived proposal id (vulnerable):', pid)
 
 # --- 3) Confirm the proposal with the other owners so it becomes executable ---
-#print('Confirming transaction (secure) with required owners')
-#for i, acct in enumerate(owners[1:3], start=1):
-#    txh_c, rec_c = call_confirm(vuln, get_owner_account(i), pid)
-#    print('Confirm tx ({i}):', txh_c); dump_tx_artifact(f'vul_sink_confirm_{i}', txh_c, rec_c)
+print('Confirming transaction (secure) with required owners')
+for i, acct in enumerate(owners[1:3], start=1):
+    txh_c, rec_c = call_confirm(vuln, get_owner_account(i), pid)
+    print('Confirm tx ({i}):', txh_c); dump_tx_artifact(f'vul_sink_confirm_{i}', txh_c, rec_c)
 
 # --- 4) Execute the proposal (this will activate the malicious recieve function in attacker contract.) ---
-#print('Executing proposal (vulnerable) — sinkhole attack should succeed')
-#txh_exec, rec_exec = call_execute(vuln, owner_accounts[0], pid, gas=2_500_000)
-#print('Execute tx:', txh_exec); dump_tx_artifact('vul_sink_execute', txh_exec, rec_exec)
+print('Executing proposal (vulnerable) — sinkhole attack should succeed')
+txh_exec, rec_exec = call_execute(vuln, owner_accounts[0], pid, gas=2_500_000)
+print('Execute tx:', txh_exec); dump_tx_artifact('vul_sink_execute', txh_exec, rec_exec)
 
 # --- 5) Record contract state AFTER execute for comparison with secure wallet ---
-#proposal_vuln = vuln.functions.getProposal(pid).call()
-#vuln_tx_status = rec_exec.status
-#summary['unchecked_external']['vuln_executed'] = proposal_vuln[EXEC_INDEX] 
-#summary['unchecked_external']['vuln_tx_status'] = vuln_tx_status
-#print('Execution Status per Wallet:', proposal_vuln[EXEC_INDEX])
-#print('Execution Status per Blockchain:', vuln_tx_status)
+proposal_vuln = vuln.functions.getProposal(pid).call()
+vuln_tx_status = rec_exec.status
+summary['unchecked_external']['vuln_executed'] = proposal_vuln[EXEC_INDEX] 
+summary['unchecked_external']['vuln_tx_status'] = vuln_tx_status
+print('Execution Status per Wallet:', proposal_vuln[EXEC_INDEX])
+print('Execution Status per Blockchain:', vuln_tx_status)
 
 # --- 6) VULNERABLE FLOW ASSERTION (After txh_exec_s) ---
 # Assert VMS: Proposal is marked executed (CORRUPTED STATE)
-#if proposal_vuln[EXEC_INDEX] and vuln_tx_status == 1:
-#    print('VMS Divergence Proof: Proposal is marked executed despite external call uncertainty.')
-#else:
-#    print('VMS Failure: Expected proposal to be marked executed.')
+if proposal_vuln[EXEC_INDEX] and vuln_tx_status == 1:
+    print('VMS Divergence Proof: Proposal is marked executed despite external call uncertainty.')
+else:
+    print('VMS Failure: Expected proposal to be marked executed.')
 
 # ---------------------------------
 #   MITIGATION EXECUTION (SECURE)
 # ---------------------------------
 
-#log_step('UNCHECKED EXTERNAL CALL (Secure)')
+log_step('UNCHECKED EXTERNAL CALL (Secure)')
 
 # --- 1) Propose tx sending TARGET_X_ETH to the attacker contract (on Secure wallet) ---
-#print('Proposing transaction (Secure -> attacker)')
-#txh_prop, rec_prop = call_propose(secure, owner_accounts[0], SINKHOLE_ADDRESS, TARGET_X_ETH)
-#print('Propose tx:', txh_prop); dump_tx_artifact('sec_sink_propose', txh_prop, rec_prop)
+print('Proposing transaction (Secure -> attacker)')
+sec_proposer_acct = owner_accounts[0]
+sec_nonce_manager = NonceManager(w3, sec_proposer_acct.address)
+txh_prop, rec_prop = call_propose(secure, sec_proposer_acct, SINKHOLE_ADDRESS, TARGET_X_ETH, nonce_manager = sec_nonce_manager)
+print('Propose tx:', txh_prop); dump_tx_artifact('sec_sink_propose', txh_prop, rec_prop)
 
 # --- 2) Derive the proposal id (proposalCount - 1) ---
-#print('Deriving the proposal id')
-#try:
-#    pc = secure.functions.proposalCount().call(); pid_su = pc - 1
-#except Exception:
-#    pid = 0
-#print('Derived proposal id (vulnerable):', pid_su)
+print('Deriving the proposal id')
+try:
+    pc = secure.functions.proposalCount().call(); pid_su = pc - 1
+except Exception:
+    pid = 0
+print('Derived proposal id (vulnerable):', pid_su)
 
 # --- 3) Confirm the proposal with the other owners so it becomes executable ---
-#for i, acct in enumerate(owners[1:3], start=1):
-#    txh_c, rec_c = call_confirm(secure, get_owner_account(i), pid_su)
-#    print('Confirm tx:', txh_c); dump_tx_artifact(f'sec_sink_confirm_{i}', txh_c, rec_c)
+for i, acct in enumerate(owners[1:3], start=1):
+    txh_c, rec_c = call_confirm(secure, get_owner_account(i), pid_su)
+    print('Confirm tx:', txh_c); dump_tx_artifact(f'sec_sink_confirm_{i}', txh_c, rec_c)
 
 # --- 4) Execute the proposal (this will activate the malicious recieve function in attacker contract.) ---
-#print('Executing proposal (secure) — should be protected against sinkhole attack')
-#txh_exec_s, rec_exec_s = call_execute(secure, owner_accounts[0], pid_su, gas=2_500_000)
-#print('Execute tx:', txh_exec_s); dump_tx_artifact('sec_sink_execute', txh_exec_s, rec_exec_s)
+print('Executing proposal (secure) — should be protected against sinkhole attack')
+txh_exec_s, rec_exec_s = call_execute(secure, owner_accounts[0], pid_su, gas=2_500_000)
+print('Execute tx:', txh_exec_s); dump_tx_artifact('sec_sink_execute', txh_exec_s, rec_exec_s)
 
 # --- 5) Record contract state AFTER execute for comparison with Vulnerable wallet ---
 # Note: Secure execution should result in a REVERT (status=0)
-#proposal_secure = secure.functions.getProposal(pid_su).call() 
-#secure_tx_status = rec_exec_s.status
-#summary['unchecked_external']['secure_executed'] = proposal_secure[EXEC_INDEX] 
-#summary['unchecked_external']['secure_tx_status'] = secure_tx_status
-#print('Execution Status per Wallet:', proposal_secure[EXEC_INDEX])
-#print('Execution Status per Blockchain:', secure_tx_status)
+proposal_secure = secure.functions.getProposal(pid_su).call() 
+secure_tx_status = rec_exec_s.status
+summary['unchecked_external']['secure_executed'] = proposal_secure[EXEC_INDEX] 
+summary['unchecked_external']['secure_tx_status'] = secure_tx_status
+print('Execution Status per Wallet:', proposal_secure[EXEC_INDEX])
+print('Execution Status per Blockchain:', secure_tx_status)
 
 # --- 6) SECURE FLOW ASSERTION (After txh_exec_s) ---
 # Note: Secure execution should result in a REVERT (status=0)
 # Assert SMS: Proposal is NOT marked executed (SAFE STATE)
 
-#if not proposal_secure[EXEC_INDEX] and secure_tx_status == 0:
-#    print('SMS Divergence Proof: Proposal is NOT executed because transaction reverted successfully.')
-#else:
-#    print('SMS Failure: Secure contract did not revert as expected.')
+if not proposal_secure[EXEC_INDEX] and secure_tx_status == 0:
+    print('SMS Divergence Proof: Proposal is NOT executed because transaction reverted successfully.')
+else:
+    print('SMS Failure: Secure contract did not revert as expected.')
 
 # ---------------------------------
 # UNECHECKED EXTERNAL CALL (IMPLODE)
@@ -964,108 +889,112 @@ summary = {'reentrancy': {}, 'unchecked_external': {}, 'batch': {}}
 # This test proves the unchecked external call vulnerability by making the target 
 # address a destroyed contract (i.e., address has no code), using Sinkhole.implode(to).
 
-#log_step('UNCHECKED EXTERNAL CALL (Post-Destruction)')
+log_step('UNCHECKED EXTERNAL CALL (Post-Destruction)')
 
 # Both contracts use index 5 for the 'executed' status (6th element)
-#EXEC_INDEX = 5 
+EXEC_INDEX = 5 
 
 # ---------------------------------
 #        STAGE 1: DESTROY SINKHOLE
 # ---------------------------------
-#log_step('STAGE 1: DEPLOY & DESTROY NEW SINKHOLE')
+log_step('STAGE 1: DEPLOY & DESTROY NEW SINKHOLE')
 
 # A. Deploy a new Sinkhole contract instance
 # The DEPLOYER_ACCOUNT will own the new Sinkhole, so it must be the one to implode it.
-#print('1. Attacker is deploying the Sinkhole contract (Implode) and will destroy as well...')
-#destroyed_addr, initial_value, txh_implode, rec_implode = deploy_and_implode_sinkhole(attacker_account, attacker_account.address)
-#print(f"[INFO] Sinkhole destroyed at: {destroyed_addr}")
-#print(f"[INFO] Original contract balance before destruction: {initial_value} wei")
+print('1. Attacker is deploying the Sinkhole contract (Implode) and will destroy as well...')
+destroyed_addr, initial_value, txh_implode, rec_implode = deploy_and_implode_sinkhole(attacker_account, attacker_account.address)
+print(f"[INFO] Sinkhole destroyed at: {destroyed_addr}")
+print(f"[INFO] Original contract balance before destruction: {initial_value} wei")
 # Verification: The Sinkhole address must have no code for the test to be valid.
-#if w3.eth.get_code(destroyed_addr) == b'':
-#    print('   VERIFIED: Sinkhole successfully destroyed.')
-#else:
-#    raise SystemExit('ERROR: Sinkhole not destroyed. Cannot run post-destruction test.')
+if w3.eth.get_code(destroyed_addr) == b'':
+    print('   VERIFIED: Sinkhole successfully destroyed.')
+else:
+    raise SystemExit('ERROR: Sinkhole not destroyed. Cannot run post-destruction test.')
 
 # ----------------------------------------------
 #        STAGE 2: ATTACK EXECUTION (VULNERABLE)
 # ----------------------------------------------
-#log_step('POST-DESTRUCTION VULNERABLE FLOW')
+log_step('POST-DESTRUCTION VULNERABLE FLOW')
 
 # --- 1) Propose a 0-ETH call to the destroyed address. The call will fail due to no code. ---
-#print('Proposing transaction (Vulnerable -> attacker)')
-#txh_prop, rec_prop = call_propose(vuln, owner_accounts[0], destroyed_addr, Decimal('0'))
-#pc = vuln.functions.proposalCount().call(); pid_vuln_dest = pc - 1
-#print(f'VMS Propose tx: {txh_prop} | PID: {pid_vuln_dest}')
+print('Proposing transaction (Vulnerable -> attacker)')
+vuln_proposer_acct = owner_accounts[0]
+vuln_nonce_manager = NonceManager(w3, vuln_proposer_acct.address)
+txh_prop, rec_prop = call_propose(vuln, vuln_proposer_acct, destroyed_addr, Decimal('0'), nonce_manager = vuln_nonce_manager)
+pc = vuln.functions.proposalCount().call(); pid_vuln_dest = pc - 1
+print(f'VMS Propose tx: {txh_prop} | PID: {pid_vuln_dest}')
 
 # --- 2) Confirm the proposal with the other owners so it becomes executable ---
-#for i, acct in enumerate(owners[1:3], start=1):
-#    tx_vs, rxc = call_confirm(vuln, get_owner_account(i), pid_vuln_dest)
-#    print('Confirm tx:', tx_vs); dump_tx_artifact(f'vul_sink_dest_confirm_{i}', tx_vs, rxc)
+for i, acct in enumerate(owners[1:3], start=1):
+    tx_vs, rxc = call_confirm(vuln, get_owner_account(i), pid_vuln_dest)
+    print('Confirm tx:', tx_vs); dump_tx_artifact(f'vul_sink_dest_confirm_{i}', tx_vs, rxc)
 
 # --- 3) Execute (Expected: TX succeeds at blockchain level, Proposal state is CORRUPTED) ---
-#txh_exec_dest_v, rec_exec_dest_v = call_execute(vuln, owner_accounts[0], pid_vuln_dest, gas=2_500_000)
-#dump_tx_artifact('vul_sink_dest_execute', txh_exec_dest_v, rec_exec_dest_v)
-#print('VMS Execute tx:', txh_exec_dest_v)
+txh_exec_dest_v, rec_exec_dest_v = call_execute(vuln, owner_accounts[0], pid_vuln_dest, gas=2_500_000)
+dump_tx_artifact('vul_sink_dest_execute', txh_exec_dest_v, rec_exec_dest_v)
+print('VMS Execute tx:', txh_exec_dest_v)
 
 # --- ASSERT VULNERABILITY (Divergence Check) ---
-#vuln_tx_status = rec_exec_dest_v.status
-#vuln_executed = vuln.functions.getProposal(pid_su).call()
+vuln_tx_status = rec_exec_dest_v.status
+vuln_executed = vuln.functions.getProposal(pid_su).call()
 
-#print('Execution Status per Wallet:', vuln_executed[EXEC_INDEX])
-#print('Execution Status per Blockchain:', vuln_tx_status)
+print('Execution Status per Wallet:', vuln_executed[EXEC_INDEX])
+print('Execution Status per Blockchain:', vuln_tx_status)
 
 
-#if vuln_tx_status == 1 and vuln_executed[EXEC_INDEX]:
-#    print('RESULT: VMS is VULNERABLE. Tx Succeeded (Status=1) despite failed call, leading to state inconsistency.')
-#    summary['unchecked_external']['post_dest_vuln'] = 'VULNERABLE_CORRUPTED_STATE'
-#else:
-#    print('ERROR: VMS did not exhibit expected vulnerable behavior (Tx status or executed flag is wrong).')
-#    summary['unchecked_external']['post_dest_vuln'] = 'ERROR_VULNERABLE_TOO_SAFE'
-#
+if vuln_tx_status == 1 and vuln_executed[EXEC_INDEX]:
+    print('RESULT: VMS is VULNERABLE. Tx Succeeded (Status=1) despite failed call, leading to state inconsistency.')
+    summary['unchecked_external']['post_dest_vuln'] = 'VULNERABLE_CORRUPTED_STATE'
+else:
+    print('ERROR: VMS did not exhibit expected vulnerable behavior (Tx status or executed flag is wrong).')
+    summary['unchecked_external']['post_dest_vuln'] = 'ERROR_VULNERABLE_TOO_SAFE'
+
 # ---------------------------------------------
 #        STAGE 3: MITIGATION EXECUTION (SECURE)
 # ---------------------------------------------
-#log_step('POST-DESTRUCTION SECURE FLOW')
+log_step('POST-DESTRUCTION SECURE FLOW')
 
 # --- 1) Propose a 0-ETH call to the destroyed address. ---
-#print('Proposing transaction (Secure -> attacker)')
-#txh_prop, rec_prop = call_propose(secure, owner_accounts[0], destroyed_addr, Decimal('0'))
-#pc = secure.functions.proposalCount().call(); pid_secure_dest = pc - 1
-#print(f'SMS Propose tx: {txh_prop} | PID: {pid_secure_dest}')
+print('Proposing transaction (Secure -> attacker)')
+sec_proposer_acct = owner_accounts[0]
+sec_nonce_manager = NonceManager(w3, sec_proposer_acct.address)
+txh_prop, rec_prop = call_propose(secure, sec_proposer_acct, destroyed_addr, Decimal('0'), nonce_manager = sec_nonce_manager)
+pc = secure.functions.proposalCount().call(); pid_secure_dest = pc - 1
+print(f'SMS Propose tx: {txh_prop} | PID: {pid_secure_dest}')
 
 # --- 2) Confirm the proposal with the other owners so it becomes executable. ---
-#for i, acct in enumerate(owners[1:3], start=1):
-#    tvs, rdx = call_confirm(secure, get_owner_account(i), pid_secure_dest)
-#    print('Confirm tx:', tvs); dump_tx_artifact(f'sec_sink_dest_confirm_{i}', tvs, rdx)
+for i, acct in enumerate(owners[1:3], start=1):
+    tvs, rdx = call_confirm(secure, get_owner_account(i), pid_secure_dest)
+    print('Confirm tx:', tvs); dump_tx_artifact(f'sec_sink_dest_confirm_{i}', tvs, rdx)
 
 # --- 3) Execute (Expected: TX REVERTS, Proposal state is SAFE). ---
-#secure_tx_status = 0
-#txh_exec_dest_s = 'TX_REVERTED'
-#try:
+secure_tx_status = 0
+txh_exec_dest_s = 'TX_REVERTED'
+try:
     # Attempt to execute. This is expected to throw an exception due to revert.
-#    txh_exec_dest_s, rec_exec_dest_s = call_execute(secure, owner_accounts[0], pid_secure_dest, gas=2_500_000)
-#    secure_tx_status = rec_exec_dest_s.status
-#    dump_tx_artifact('sec_sink_dest_execute', txh_exec_dest_s, rec_exec_dest_s)
-#except Exception:
+    txh_exec_dest_s, rec_exec_dest_s = call_execute(secure, owner_accounts[0], pid_secure_dest, gas=2_500_000)
+    secure_tx_status = rec_exec_dest_s.status
+    dump_tx_artifact('sec_sink_dest_execute', txh_exec_dest_s, rec_exec_dest_s)
+except Exception:
     # This is the expected path on revert.
-#    pass
+    pass
 
 # Get the final executed status (should be False due to the revert)
-#secure_tx_status = rec_exec_dest_s.status
-#secure_executed = secure.functions.getProposal(pid_su).call()
+secure_tx_status = rec_exec_dest_s.status
+secure_executed = secure.functions.getProposal(pid_su).call()
 
-#print('Execution Status per Wallet:', secure_executed[EXEC_INDEX])
-#print('Execution Status per Blockchain:', secure_tx_status)
+print('Execution Status per Wallet:', secure_executed[EXEC_INDEX])
+print('Execution Status per Blockchain:', secure_tx_status)
 
 
 # --- ASSERT MITIGATION (Divergence Check) ---
-#if secure_tx_status == 0 and not secure_executed[EXEC_INDEX]:
-#    print('RESULT: SMS is SECURE. Tx REVERTED (Status=0) and proposal is NOT executed. Mitigation successful against dead contract call.')
-#    summary['unchecked_external']['post_dest_secure'] = 'SECURE_SAFE_STATE'
-#else:
+if secure_tx_status == 0 and not secure_executed[EXEC_INDEX]:
+    print('RESULT: SMS is SECURE. Tx REVERTED (Status=0) and proposal is NOT executed. Mitigation successful against dead contract call.')
+    summary['unchecked_external']['post_dest_secure'] = 'SECURE_SAFE_STATE'
+else:
     # If the SMS doesn't revert (status=1) or marks it executed (True), the mitigation failed.
-#    print('ERROR: SMS mitigation failed. Tx status or executed flag is wrong (Secure Wallet exhibited vulnerable behavior).')
-#    summary['unchecked_external']['post_dest_secure'] = 'FAILURE_VULNERABLE_BEHAVIOR'
+    print('ERROR: SMS mitigation failed. Tx status or executed flag is wrong (Secure Wallet exhibited vulnerable behavior).')
+    summary['unchecked_external']['post_dest_secure'] = 'FAILURE_VULNERABLE_BEHAVIOR'
 
 
 # --------------------------------------
@@ -1355,10 +1284,10 @@ datas_post_s = [b'' for _ in tos_post_s]
 try:
     post_pids_s, txh_post_s, rec_post_s = batch_propose_and_get_pids(secure, sec_proposer_acct, tos_post_s, vals_post_s, datas_post_s, sec_nonce_manager)
     secure_batch_info.extend(post_pids_s)
-    dump_tx_artifact('sec_batch_propose_post_tx', txh_s_post, rec_s_post)
+    dump_tx_artifact('sec_batch_propose_post_tx', txh_post_s, rec_post_s)
     print(f"  secure post-fill proposals created: {len(pids_post)} pids")
-except web3.exceptions.ContractLogicError as cre:
-    print(f"[ERROR] secure post-batchPropose reverted: {cre}")
+#except web3.exceptions.ContractLogicError as cre:
+#    print(f"[ERROR] secure post-batchPropose reverted: {cre}")
 except Exception as e:
     print(f"[ERROR] unexpected error while batch_propose_and_get_pids (secure post): {e}")
 

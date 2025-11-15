@@ -121,15 +121,13 @@ contract SecureMultiSig {
      * @notice Internal function to create a proposal without checking for owner status,
      * as the calling function must perform that check.
      */
-    function _proposeTransaction(
-        address _proposer,
-        address _to,
-        uint256 _value,
-        bytes calldata _data
-    ) internal returns (uint256) {
+    function _proposeTransaction(address _proposer, address _to, uint256 _value, bytes calldata _data)
+        internal
+        returns (uint256)
+    {
         uint256 id = ++proposalCount;
         bytes32 dataHash = keccak256(_data);
-        
+
         // Retain the debug event (Source 32)
         emit DebugPropose(_proposer, _to, _value);
 
@@ -143,9 +141,9 @@ contract SecureMultiSig {
             createdAt: block.timestamp,
             executeAfter: 0
         });
-        
+
         // Retain the creation event (Source 34)
-        emit ProposalCreated(id, _proposer, _to, _value, dataHash); 
+        emit ProposalCreated(id, _proposer, _to, _value, dataHash);
         return id;
     }
 
@@ -206,17 +204,16 @@ contract SecureMultiSig {
     }
 
     /// @notice Create many proposals in one transaction (bounded)
-    function batchPropose(
-        address[] calldata tos, 
-        uint256[] calldata values, 
-        bytes[] calldata datas
-    ) external onlyOwner {
+    function batchPropose(address[] calldata tos, uint256[] calldata values, bytes[] calldata datas)
+        external
+        onlyOwner
+    {
         // Add onlyOwner modifier for security, as this function needs owner authorization.
         require(tos.length > 0, "no proposals");
         // MITIGATION T-11: cap batch size (Source 15: MAX_BATCH is 32)
-        require(tos.length <= MAX_BATCH, "batch size exceeds MAX_BATCH"); 
-        require(tos.length == values.length && tos.length == datas.length, "length mismatch"); 
-        
+        require(tos.length <= MAX_BATCH, "batch size exceeds MAX_BATCH");
+        require(tos.length == values.length && tos.length == datas.length, "length mismatch");
+
         // The msg.sender is guaranteed to be an owner by the onlyOwner modifier.
         address proposer = msg.sender;
 
@@ -227,6 +224,7 @@ contract SecureMultiSig {
         }
     }
     /// @notice Confirm multiple proposals in one transaction (danger: unbounded loop)
+
     function batchConfirm(uint256[] calldata ids) external {
         for (uint256 i = 0; i < ids.length; ++i) {
             confirmTransaction(ids[i]);
