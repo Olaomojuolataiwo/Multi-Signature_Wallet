@@ -181,42 +181,39 @@ def section_header(name):
 # ------------------------------------------------------------
 
 def test_valid_execution():
-    section_header("SECTION 1 — VALID EXECUTION: VULNERABLE vs SECURE")
+    print(f"\n" + "="*80)
+    print(f"======== TEST 1: STRUCTURAL VALIDATION (Simple Withdrawal) ========")
+    print(f"="*80 + "\n")
 
     value = 1000
     data = b""
 
-    # --- Vulnerable ---
-    print("[VULNERABLE] Executing valid signed call...")
+# ----------------------------------
+#    ATTACK EXECUTION
+# ----------------------------------
+
+    print(f"\n--- VULNERABLE WALLET EXECUTION ---")
     sig_v = build_vulnerable_signature(BENEFICIARY, value, data)
-    tx = build_tx(
-        to=VULN_ADDR,
-        data=vuln.functions.executeWithSignature(
-            BENEFICIARY, value, data, sig_v
-        ).build_transaction({"from": SIGNER})["data"]
-    )
+    tx = build_tx(to=VULN_ADDR, data=vuln.functions.executeWithSignature(BENEFICIARY, value, data, sig_v).build_transaction({"from": SIGNER})["data"])
     r_vuln = send_tx(tx)
-    print("Vulnerable Receipt:", r_vuln.transactionHash.hex())
+    if r_vuln.status == 1:
+        print("EXPECTED: VALID EXECUTION ON VULNERABLE WALLET SUCCESFUL", r_vuln.transactionHash.hex())
+    else:
+        print("UNEXPECTED: VALID EXECUTION ON VULNERABLE WALLET FAILED!", r_vuln.transactionHash.hex())
 
-    # --- Secure ---
-    print("\n[SECURE] Executing valid EIP-712 signed call...")
-    # Debug Step
-    owners = secure.functions.getOwners().call()
-    print(f"\n[DEBUG] Contract Owners (from getOwners()): {owners}")
+# --------------------------------
+#    ATTACK MITIGATION
+# --------------------------------
 
-    # 2. Get and Debug: Nonce
+    print(f"\n--- SECURE WALLET EXECUTION ---")
     nonce = secure.functions.nonces(SIGNER).call()
-    print(f"[DEBUG] Contract Nonce for Signer: {nonce}") # <--- ADDED NONCE PRINT
-
     typed, sig_s = build_secure_eip712(BENEFICIARY, value, data, nonce)
-    tx2 = build_tx(
-        to=SECURE_ADDR,
-        data=secure.functions.executeWithSignature(
-            BENEFICIARY, value, data, nonce, sig_s
-        ).build_transaction({"from": acct.address})["data"]
-    )
+    tx2 = build_tx(to=SECURE_ADDR, data=secure.functions.executeWithSignature( BENEFICIARY, value, data, nonce, sig_s).build_transaction({"from": acct.address})["data"])
     r_sec = send_tx(tx2)
-    print("Secure Receipt:", r_sec.transactionHash.hex())
+    if r_sec.status == 1:
+        print("EXPECTED: VALID EXECUTION ON SECURE WALLET SUCCESFUL", r_sec.transactionHash.hex())
+    else:
+        print("UNEXPECTED: VALID EXECUTION ON SECURE WALLET FAILED!", r_sec.transactionHash.hex())
 
 
 # ------------------------------------------------------------
@@ -224,74 +221,62 @@ def test_valid_execution():
 # ------------------------------------------------------------
 
 def test_replay():
-    section_header("SECTION 2 — REPLAY: VULNERABLE vs SECURE")
+    print(f"\n" + "="*80)
+    print(f"======== TEST 2: REPLAY TEST ========")
+    print(f"="*80 + "\n")
 
     value = 1
     data = b""
 
-    # --- Vulnerable replay ---
-    print("[VULNERABLE] Attempting replay...")
+# ---------------------------------
+#    ATTACK EXECUTION
+# ---------------------------------
+
+    print(f"\n--- VULNERABLE WALLET EXECUTION ---")
+    print("Attempting initial transaction on Vulnerable Wallet")
     sig = build_vulnerable_signature(BENEFICIARY, value, data)
 
-    tx = build_tx(
-        to=VULN_ADDR,
-        data=vuln.functions.executeWithSignature(BENEFICIARY, value, data, sig)
-            .build_transaction({"from": SIGNER})["data"]
-    )
+    tx = build_tx(to=VULN_ADDR, data=vuln.functions.executeWithSignature(BENEFICIARY, value, data, sig).build_transaction({"from": SIGNER})["data"])
     r1 = send_tx(tx)
     print("Vulnerable First Tx:", r1.transactionHash.hex())
 
-    tx_replay = build_tx(
-        to=VULN_ADDR,
-        data=vuln.functions.executeWithSignature(BENEFICIARY, value, data, sig)
-            .build_transaction({"from": SIGNER})["data"]
-    )
+    print("Attempting replay transaction on Vulnerable Wallet")
+    tx_replay = build_tx(to=VULN_ADDR, data=vuln.functions.executeWithSignature(BENEFICIARY, value, data, sig).build_transaction({"from": SIGNER})["data"])
     r2 = send_tx(tx_replay)
-    print("Vulnerable Replay Tx:", r2.transactionHash.hex(), " (should SUCCEED)")
+    if r2.status == 1:
+        print("EXPECTED: REPLAY ATTACK ON VULNERABLE WALLET SUCCESFUL", r2.transactionHash.hex())
+    else:
+        print("UNEXPECTED: REPLAY ATTACK ON VULNERABLE WALLET FAILED!", r2.transactionHash.hex())
 
+# --------------------------------
+#    ATTACK MITIGATION
+# --------------------------------
 
-    # --- Secure replay ---
-    print("\n[SECURE] Attempting replay...")
+    print(f"\n--- SECURE WALLET EXECUTION ---")
+    print("Attempting initial transaction on Secure Wallet")
 
     nonce = secure.functions.nonces(SIGNER).call()
     typed, sig_s = build_secure_eip712(BENEFICIARY, value, data, nonce)
 
-    #
-    # --- FIRST EXECUTION (should succeed)
-    #
-    func = secure.functions.executeWithSignature(
-        BENEFICIARY, value, data, nonce, sig_s
-    )
+    func = secure.functions.executeWithSignature(BENEFICIARY, value, data, nonce, sig_s)
 
-    tx_s = func.build_transaction({
-        "from": acct.address,          # ensure from == signer
-        "nonce": w3.eth.get_transaction_count(acct.address),
-        "gas": 300000,                 # bypass gas estimation (which would revert)
-    })
-
+    tx_s = func.build_transaction({"from": acct.address, "nonce": w3.eth.get_transaction_count(acct.address), "gas": 300000,})
     r_s1 = send_tx(tx_s)
     print("Secure First Tx:", r_s1.transactionHash.hex())
 
-    #
-    # --- REPLAY ATTEMPT (should revert with invalid nonce)
-    #
+    print("Attempting replay transaction on Secure Wallet")
     func_replay = secure.functions.executeWithSignature(BENEFICIARY, value, data, nonce, sig_s)
 
-    tx_s_replay = func_replay.build_transaction({
-        "from": acct.address,
-        "nonce": w3.eth.get_transaction_count(acct.address),
-        "gas": 300000,                  # must bypass estimation again
-    })
+    tx_s_replay = func_replay.build_transaction({"from": acct.address, "nonce": w3.eth.get_transaction_count(acct.address), "gas": 300000,})
 
     try:
         r_s2 = send_tx(tx_s_replay)
         if r_s2.status == 0:
-            print("Secure Replay Reverted (expected):", r_s2.transactionHash.hex())
+            print("EXPECTED: REPLAY ATTACK ON SECURE WALLET FAILS", r_s2.transactionHash.hex())
         else:
-            print("UNEXPECTED: Secure replay succeeded!", r_s2.transactionHash.hex())
+            print("UNEXPECTED: REPLAY ATTACK ON SECURE WALLET SUCCESSFUL!", r_s2.transactionHash.hex())
 
     except ContractLogicError as e:
-        # Should not reach here now that gas estimation is disabled
         print("Secure Replay Reverted (caught in except):", e)
 
 # ------------------------------------------------------------
@@ -299,53 +284,48 @@ def test_replay():
 # ------------------------------------------------------------
 
 def test_structural_mutation():
-    section_header("SECTION 3 — STRUCTURAL ATTACKS: VULNERABLE vs SECURE")
+    print(f"\n" + "="*80)
+    print(f"======== TEST 3: MUTATION TEST ========")
+    print(f"="*80 + "\n")
 
-    # tamper with value
     correct_value = 50
     mutated_value = 9999
     data = b""
 
-    """
-    ----------------------------
-    VULNERABLE — accepts mutation
-    ----------------------------
-    """
-    print("[VULNERABLE] Mutated value test...")
+
+# ----------------------------------
+#    ATTACK EXECUTION
+# ----------------------------------
+
+    print(f"\n--- VULNERABLE WALLET EXECUTION ---")
+
     sig = build_vulnerable_signature(BENEFICIARY, correct_value, data)
-
-    # But we send a different value in call
-    tx = build_tx(
-        to=VULN_ADDR,
-        data=vuln.functions.executeWithSignature(BENEFICIARY, mutated_value, data, sig)
-            .build_transaction({"from": SIGNER})["data"]
-    )
+    tx = build_tx(to=VULN_ADDR, data=vuln.functions.executeWithSignature(BENEFICIARY, mutated_value, data, sig).build_transaction({"from": SIGNER})["data"])
     r_v = send_tx(tx)
-    print("Vulnerable mutated call:", r_v.transactionHash.hex())
+    if r_v.status == 1:
+        print("EXPECTED: MUTATION TEST ON VULNERABLE WALLET SUCCESFUL", r_v.transactionHash.hex())
+    else:
+        print("UNEXPECTED: MUTATION TEST ON VULNERABLE WALLET FAILED!", r_v.transactionHash.hex())
 
-    """
-    ----------------------------
-    SECURE — rejects mutation
-    ----------------------------
-    """
-    print("\n[SECURE] Mutated value test...")
+
+
+# -------------------------------
+#     ATTACK MITIGATION
+# -------------------------------
+
+    print(f"\n--- SECURE WALLET EXECUTION ---")
     nonce = secure.functions.nonces(SIGNER).call()
     _, sig_mut = build_secure_eip712(BENEFICIARY, correct_value, data, nonce)
 
-    # sending mutated value to Secure
     func = secure.functions.executeWithSignature(BENEFICIARY, mutated_value, data, nonce, sig_mut)
 
-    tx_mut = func.build_transaction({
-    "from": acct.address,
-    "nonce": w3.eth.get_transaction_count(acct.address),
-    "gas": 300000,  # bypass gas estimation (which would revert)
-    })
+    tx_mut = func.build_transaction({"from": acct.address, "nonce": w3.eth.get_transaction_count(acct.address), "gas": 300000,})
     try:
         r_mut = send_tx(tx_mut)
         if r_mut.status == 0:
-            print("Secure Mutation Reverted (expected):", r_mut.transactionHash.hex())
+            print("EXPECTED: MUTATION/STRUCTURAL ATTACKS ON SECURE WALLET FAILS", r_mut.transactionHash.hex())
         else:
-            print("UNEXPECTED: Secure mutation succeeded!", r_mut.transactionHash.hex())
+            print("UNEXPECTED: MUTATION/STRUCTURAL ATTACKS ON SECURE WALLET SUCCESSFUL!", r_mut.transactionHash.hex())
     except ContractLogicError as e:
         print("Secure Mutation Reverted (caught):", e)
 
@@ -354,42 +334,47 @@ def test_structural_mutation():
 # ------------------------------------------------------------
 
 def test_arithmetic():
-    section_header("SECTION 4 — ARITHMETIC: VULNERABLE vs SECURE")
-
+    print(f"\n" + "="*80)
+    print(f"======== TEST 4: ARITHMETIC ATTACKS TEST ========")
+    print(f"="*80 + "\n")
+ 
     max_uint = (2**256) - 1
     overflow_value = max_uint
 
     data = b""
 
-    # Vulnerable
-    print("[VULNERABLE] Overflow test...")
-    sig = build_vulnerable_signature(BENEFICIARY, overflow_value, data)
-    tx = build_tx(
-        to=VULN_ADDR,
-        data=vuln.functions.executeWithSignature(BENEFICIARY, overflow_value, data, sig)
-            .build_transaction({"from": SIGNER})["data"]
-    )
-    r_v = send_tx(tx)
-    print("Vulnerable overflow tx:", r_v.transactionHash.hex(), "(wrapped silently)")
+# ----------------------------------
+#    ATTACK EXECUTION
+# ----------------------------------
 
-    # Secure
-    print("\n[SECURE] Overflow test...")
+    print(f"\n--- VULNERABLE WALLET EXECUTION ---")
+
+    sig = build_vulnerable_signature(BENEFICIARY, overflow_value, data)
+    tx = build_tx(to=VULN_ADDR, data=vuln.functions.executeWithSignature(BENEFICIARY, overflow_value, data, sig).build_transaction({"from": SIGNER})["data"])
+    r_v = send_tx(tx)
+    if r_v.status == 1:
+        print("EXPECTED: ARITHMETIC ATTACKS TEST ON VULNERABLE WALLET SUCCESFUL", r_v.transactionHash.hex())
+    else:
+        print("UNEXPECTED: ARITHMETIC ATTACKS TEST ON VULNERABLE WALLET FAILED!", r_v.transactionHash.hex())
+
+# -------------------------------
+#     ATTACK MITIGATION
+# -------------------------------
+
+    print(f"\n--- SECURE WALLET EXECUTION ---")
+
     nonce = secure.functions.nonces(SIGNER).call()
     _, sig_s = build_secure_eip712(BENEFICIARY, overflow_value, data, nonce)
 
     func = secure.functions.executeWithSignature( BENEFICIARY, overflow_value, data, nonce, sig_s)
 
-    tx_ovr = func.build_transaction({
-    "from": acct.address,
-    "nonce": w3.eth.get_transaction_count(acct.address),
-    "gas": 300000,  # bypass gas estimation (which would revert)
-    })
+    tx_ovr = func.build_transaction({"from": acct.address, "nonce": w3.eth.get_transaction_count(acct.address), "gas": 300000,})
     try:
         r_ovr = send_tx(tx_ovr)
         if r_ovr.status == 0:
-            print("Secure Overflow Reverted (expected):", r_ovr.transactionHash.hex())
+            print("EXPECTED: ARITHMETIC ATTACKS ON SECURE WALLET FAILS", r_ovr.transactionHash.hex())
         else:
-            print("UNEXPECTED: Secure Overflow succeeded!", r_ovr.transactionHash.hex())
+            print("UNEXPECTED: ARITHMETIC ATTACKS ON SECURE WALLET SUCCESSFUL!", r_ovr.transactionHash.hex())
     except ContractLogicError as e:
         print("Secure Overflow Reverted (caught):", e)
 
@@ -399,44 +384,45 @@ def test_arithmetic():
 # ------------------------------------------------------------
 
 def test_input_sanitization():
-    section_header("SECTION 5 — INPUT SANITIZATION: VULNERABLE vs SECURE")
+    print(f"\n" + "="*80)
+    print(f"======== TEST 5: INPUT SANITIZATION TEST ========")
+    print(f"="*80 + "\n")
 
     zero_addr = "0x0000000000000000000000000000000000000000"
     value = 0
     data = b""
 
-    # Vulnerable accepts zero-address + zero-value
-    print("[VULNERABLE] Zero address test...")
+# ----------------------------------
+#    ATTACK EXECUTION
+# ----------------------------------
+    print(f"\n--- VULNERABLE WALLET EXECUTION ---")
     sig = build_vulnerable_signature(zero_addr, value, data)
-    tx = build_tx(
-        to=VULN_ADDR,
-        data=vuln.functions.executeWithSignature(zero_addr, value, data, sig)
-            .build_transaction({"from": SIGNER})["data"]
-    )
+    tx = build_tx(to=VULN_ADDR, data=vuln.functions.executeWithSignature(zero_addr, value, data, sig).build_transaction({"from": SIGNER})["data"])
     r_v = send_tx(tx)
-    print("Vulnerable zero-address tx:", r_v.transactionHash.hex())
+    if r_v.status == 1:
+        print("EXPECTED: INPUT SANITIZATION TEST ON VULNERABLE WALLET SUCCESFUL", r_v.transactionHash.hex())
+    else:
+        print("UNEXPECTED: INPUT SANITIZATION TEST ON VULNERABLE WALLET FAILED!", r_v.transactionHash.hex())
 
-    # Secure rejects zero address
-    print("\n[SECURE] Zero address test...")
+# -------------------------------
+#     ATTACK MITIGATION
+# -------------------------------
+    print(f"\n--- SECURE WALLET EXECUTION ---")
+
     nonce = secure.functions.nonces(SIGNER).call()
     _, sig_s = build_secure_eip712(zero_addr, value, data, nonce)
 
     func = secure.functions.executeWithSignature(zero_addr, value, data, nonce, sig_s)
 
-    tx_zero = func.build_transaction({
-    "from": acct.address,
-    "nonce": w3.eth.get_transaction_count(acct.address),
-    "gas": 300000,  # bypass gas estimation (which would revert)
-    })
+    tx_zero = func.build_transaction({"from": acct.address, "nonce": w3.eth.get_transaction_count(acct.address), "gas": 300000,})
     try:
         r_zero = send_tx(tx_zero)
         if r_zero.status == 0:
-            print("Secure Overflow Reverted (expected):", r_zero.transactionHash.hex())
+            print("EXPECTED: INPUT SANITIZATION TEST ON SECURE WALLET FAILS", r_zero.transactionHash.hex())
         else:
-            print("UNEXPECTED: Secure Overflow succeeded!", r_zero.transactionHash.hex())
+            print("UNEXPECTED: INPUT SANITIZATION TEST ON SECURE WALLET SUCCESSFUL", r_zero.transactionHash.hex())
     except ContractLogicError as e:
         print("Secure Overflow Reverted (caught):", e)
-
 
 # ============================================================
 #  Run All Sections

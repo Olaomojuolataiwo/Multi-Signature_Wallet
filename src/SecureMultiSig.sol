@@ -125,6 +125,7 @@ contract SecureMultiSig {
         internal
         returns (uint256)
     {
+        require(_to != address(0), "target is zero address");
         uint256 id = ++proposalCount;
         bytes32 dataHash = keccak256(_data);
 
@@ -348,6 +349,7 @@ contract SecureMultiSig {
         uint256 nonce,
         bytes calldata signature
     ) external nonReentrant returns (bool) {
+        require(to != address(0), "target is zero address");
         bytes32 dataHash = keccak256(data);
 
         // Recreate the struct hash and EIP-712 digest

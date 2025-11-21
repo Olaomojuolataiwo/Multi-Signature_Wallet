@@ -281,4 +281,59 @@ contract VulnerableMultiSig {
         // T-12: abi.encodePacked may cause collisions — used intentionally to show risk
         return keccak256(abi.encodePacked(a, b, s));
     }
+
+    // Emit a richer snapshot event for debug / artifact reconstruction.
+    event ProposalSnapshot(
+        uint256 indexed proposalId,
+        address proposer,
+        address to,
+        uint256 value,
+        uint256 confirmations,
+        bool executed,
+        uint256 createdAt
+    );
+
+    // Return the list of owners and the current threshold in a single call.
+    function getGovernanceState() external view returns (address[] memory, uint256) {
+        return (owners, threshold);
+    }
+
+    // This function iterates owner list and checks the proposal.confirmed map.
+    // NOTE: reading mapping inside struct is supported in view context.
+    function getProposalConfirmations(uint256 proposalId) external view returns (address[] memory) {
+        Proposal storage p = proposals[proposalId];
+
+        // pre-allocate using the stored confirmations count as an upper bound
+        uint256 count = p.confirmations;
+        address[] memory confirmers = new address[](count);
+        uint256 idx = 0;
+
+        // iterate owners and collect those who have confirmed
+        for (uint256 i = 0; i < owners.length; i++) {
+            if (p.confirmed[owners[i]]) {
+                // guard to avoid out-of-bounds if stored count is stale for some reason
+                if (idx < count) {
+                    confirmers[idx] = owners[i];
+                    idx++;
+                }
+            }
+        }
+
+        // If we somehow filled fewer than count (defensive), shrink array:
+        if (idx < count) {
+            address[] memory trimmed = new address[](idx);
+            for (uint256 j = 0; j < idx; j++) {
+                trimmed[j] = confirmers[j];
+            }
+            return trimmed;
+        }
+
+        return confirmers;
+    }
+
+    // Emit a proposal snapshot event (helpful after deletes/cancellations to reconstruct).
+    function emitProposalSnapshot(uint256 proposalId) external {
+        Proposal storage p = proposals[proposalId];
+        emit ProposalSnapshot(proposalId, p.proposer, p.to, p.value, p.confirmations, p.executed, p.createdAt);
+    }
 }
