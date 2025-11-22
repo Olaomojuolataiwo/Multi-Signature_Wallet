@@ -33,6 +33,7 @@ contract SecureMultiSig {
         bool executed;
         uint256 createdAt;
         uint256 executeAfter; // used for optional timelock on governance proposals
+        bytes data;
     }
 
     uint256 public proposalCount;
@@ -140,7 +141,8 @@ contract SecureMultiSig {
             confirmations: 0,
             executed: false,
             createdAt: block.timestamp,
-            executeAfter: 0
+            executeAfter: 0,
+            data: _data
         });
 
         // Retain the creation event (Source 34)
@@ -188,8 +190,7 @@ contract SecureMultiSig {
         p.executed = true;
 
         // execute external call; revert if it fails (choose atomic semantics to avoid dangling state)
-        (bool success, bytes memory result) =
-            p.to.call{value: p.value}(abi.encodePacked(p.dataHash == keccak256("") ? bytes("") : bytes("")));
+        (bool success, bytes memory result) = p.to.call{value: p.value}(p.data);
 
         // NOTE: We used dataHash only in storage; however we must pass original data.
         // To keep storage lean while keeping function signature identical to Vulnerable multisig,
@@ -274,7 +275,8 @@ contract SecureMultiSig {
             confirmations: 0,
             executed: false,
             createdAt: block.timestamp,
-            executeAfter: block.timestamp + timelockDuration // MITIGATION T-06: governance timelock
+            executeAfter: block.timestamp + timelockDuration, // MITIGATION T-06: governance timelock
+            data: abi.encode(newOwner)
         });
         emit ProposalCreated(id, msg.sender, address(this), 0, dataHash);
         return id;
@@ -293,7 +295,8 @@ contract SecureMultiSig {
             confirmations: 0,
             executed: false,
             createdAt: block.timestamp,
-            executeAfter: block.timestamp + timelockDuration
+            executeAfter: block.timestamp + timelockDuration,
+            data: abi.encode(owner)
         });
         emit ProposalCreated(id, msg.sender, address(this), 0, dataHash);
         return id;
@@ -312,7 +315,8 @@ contract SecureMultiSig {
             confirmations: 0,
             executed: false,
             createdAt: block.timestamp,
-            executeAfter: block.timestamp + timelockDuration
+            executeAfter: block.timestamp + timelockDuration,
+            data: abi.encode(newThreshold)
         });
         emit ProposalCreated(id, msg.sender, address(this), 0, dataHash);
         return id;
@@ -327,14 +331,25 @@ contract SecureMultiSig {
         require(p.confirmations >= threshold, "not enough confirmations");
         require(block.timestamp >= p.executeAfter, "timelock not passed");
 
-        // parse action from dataHash — in a production contract you'd store an opcode or explicit calldata
-        // For demo: we only support the three governance ops above (add/remove/changeThreshold)
-        bytes32 dh = p.dataHash;
-        // The following is illustrative; in real code you'd store encoded calldata to avoid collisions.
-        // For demo purposes only:
-        // TODO: map dh -> action; here we will simply mark executed and rely on off-chain tracking for which action to perform.
+        // CEI: mark executed before mutating external state
         p.executed = true;
-        emit Executed(proposalId, msg.sender, true, abi.encodePacked(dh));
+        bytes memory raw = p.data;
+
+        // Attempt to match and execute one of the supported governance actions.
+        // We stored encoded calldata in p.data when creating the proposal.
+        // If an unsupported action is present, revert to keep deterministic state.
+        // addOwner action
+        bytes memory payload = p.data;
+        if (p.dataHash == keccak256(abi.encodePacked("addOwner", abi.decode(raw, (address))))) {
+            _addOwner(abi.decode(raw, (address)));
+        } else if (p.dataHash == keccak256(abi.encodePacked("removeOwner", abi.decode(raw, (address))))) {
+            _removeOwner(abi.decode(raw, (address)));
+        } else if (p.dataHash == keccak256(abi.encodePacked("changeThreshold", abi.decode(raw, (uint256))))) {
+            _changeThreshold(abi.decode(raw, (uint256)));
+        } else {
+            revert("unknown governance action");
+        }
+        emit Executed(proposalId, msg.sender, true, raw);
     }
 
     // -----------------------

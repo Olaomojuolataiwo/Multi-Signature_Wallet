@@ -18,7 +18,7 @@ contract DeployAll is Script {
             address(uint160(vm.envOr("OWNER3", uint256(uint160(address(0xAB168F094e0037eDA6562da1d4784bD44B1860A1))))));
 
         uint256 threshold = vm.envOr("THRESHOLD", uint256(2));
-        uint256 timelock = vm.envOr("TIMELOCK", uint256(172800)); // 2 days
+        uint256 timelock = vm.envOr("TIMELOCK", uint256(120)); // 2 minutes
 
         address[] memory owners = new address[](3);
         owners[0] = owner1;

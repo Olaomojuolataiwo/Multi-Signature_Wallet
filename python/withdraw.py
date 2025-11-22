@@ -18,8 +18,8 @@ w3.middleware_onion.inject(ExtraDataToPOAMiddleware, layer=0)
 
 # 2. Wallet Addresses & Keys
 # MIGRATION PATH: Vulnerable (Old) -> Secure (New)
-OLD_MULTISIG_ADDRESS = "0xd2A933e591F19B828Bf669127e446d037B163575" 
-NEW_MULTISIG_ADDRESS = "0xB2166d14b356C1d87DF83924BCA5C51CBB40C409"
+OLD_MULTISIG_ADDRESS = "0x14d08506aD695BCC9b03883a277F56dE76D01D7B" 
+NEW_MULTISIG_ADDRESS = "0xf270B7358DC3E5368787e4576B97fb9e20cbB2b7"
 
 # **OWNER ACCOUNTS & KEYS**
 OWNER_DETAILS = {
@@ -49,268 +49,408 @@ KEY_2 = OWNER_DETAILS["2"]["private_key"]
 # 3. Contract ABI (from VulnerableMultiSig.txt)
 # We must use the ABI of the contract that *currently holds the funds*.
 
-VULNERABLE_MULTISIG_ABI = [
+VULNERABLE_MULTISIG_ABI =  [
+
   {
+
     "type": "constructor",
+
     "inputs": [
+
       { "internalType": "address[]", "name": "_owners", "type": "address[]" },
+
       { "internalType": "uint256", "name": "_threshold", "type": "uint256" }
+
     ],
+
     "stateMutability": "payable"
+
   },
+
   {
+
     "type": "function",
+
     "name": "addOwner",
+
     "inputs": [{ "internalType": "address", "name": "newOwner", "type": "address" }],
+
     "outputs": [],
+
     "stateMutability": "nonpayable"
+
   },
+
   {
+
     "type": "function",
+
     "name": "batchConfirm",
+
     "inputs": [{ "internalType": "uint256[]", "name": "ids", "type": "uint256[]" }],
+
     "outputs": [],
+
     "stateMutability": "nonpayable"
+
   },
+
   {
+
     "type": "function",
+
     "name": "batchExecute",
+
     "inputs": [{ "internalType": "uint256[]", "name": "ids", "type": "uint256[]" }],
+
     "outputs": [],
+
     "stateMutability": "nonpayable"
+
   },
+
   {
+
     "type": "function",
+
     "name": "batchPropose",
+
     "inputs": [
+
       { "internalType": "address[]", "name": "tos", "type": "address[]" },
+
       { "internalType": "uint256[]", "name": "values", "type": "uint256[]" },
+
       { "internalType": "bytes[]", "name": "datas", "type": "bytes[]" }
+
     ],
+
     "outputs": [],
+
     "stateMutability": "nonpayable"
+
   },
+
   {
+
     "type": "function",
+
     "name": "cancelTransaction",
+
     "inputs": [{ "internalType": "uint256", "name": "proposalId", "type": "uint256" }],
+
     "outputs": [],
+
     "stateMutability": "nonpayable"
+
   },
+
   {
+
     "type": "function",
+
     "name": "changeThreshold",
+
     "inputs": [{ "internalType": "uint256", "name": "newThreshold", "type": "uint256" }],
+
     "outputs": [],
+
     "stateMutability": "nonpayable"
+
   },
+
   {
+
     "type": "function",
+
     "name": "confirmTransaction",
+
     "inputs": [{ "internalType": "uint256", "name": "proposalId", "type": "uint256" }],
+
     "outputs": [],
+
     "stateMutability": "nonpayable"
+
   },
+
   {
+
     "type": "function",
+
     "name": "dangerousAdd",
+
     "inputs": [
+
       { "internalType": "uint256", "name": "a", "type": "uint256" },
+
       { "internalType": "uint256", "name": "b", "type": "uint256" }
+
     ],
+
     "outputs": [{ "internalType": "uint256", "name": "", "type": "uint256" }],
+
     "stateMutability": "pure"
+
   },
+
   {
+
     "type": "function",
+
     "name": "emergencyWithdraw",
+
     "inputs": [{ "internalType": "address payable", "name": "to", "type": "address" }],
+
     "outputs": [],
+
     "stateMutability": "nonpayable"
+
   },
+
   {
+
     "type": "function",
+
     "name": "executeTransaction",
+
     "inputs": [{ "internalType": "uint256", "name": "proposalId", "type": "uint256" }],
+
     "outputs": [],
+
     "stateMutability": "nonpayable"
+
   },
+
   {
+
     "type": "function",
+
     "name": "executeWithSignature",
+
     "inputs": [
+
       { "internalType": "address", "name": "to", "type": "address" },
+
       { "internalType": "uint256", "name": "value", "type": "uint256" },
+
       { "internalType": "bytes", "name": "data", "type": "bytes" },
+
       { "internalType": "bytes", "name": "signature", "type": "bytes" }
+
     ],
+
     "outputs": [],
+
     "stateMutability": "nonpayable"
+
   },
+
   {
+
     "type": "function",
+
     "name": "getOwners",
+
     "inputs": [],
+
     "outputs": [{ "internalType": "address[]", "name": "", "type": "address[]" }],
+
     "stateMutability": "view"
+
   },
+
   {
+
     "type": "function",
+
     "name": "getProposal",
+
     "inputs": [{ "internalType": "uint256", "name": "proposalId", "type": "uint256" }],
+
     "outputs": [
+
       { "internalType": "address", "name": "proposer", "type": "address" },
+
       { "internalType": "address", "name": "to", "type": "address" },
+
       { "internalType": "uint256", "name": "value", "type": "uint256" },
+
       { "internalType": "bytes", "name": "data", "type": "bytes" },
+
       { "internalType": "uint256", "name": "confirmations", "type": "uint256" },
+
       { "internalType": "bool", "name": "executed", "type": "bool" },
+
       { "internalType": "uint256", "name": "createdAt", "type": "uint256" }
+
     ],
+
     "stateMutability": "view"
+
   },
+
   {
+
     "type": "function",
+
     "name": "isOwner",
+
     "inputs": [{ "internalType": "address", "name": "", "type": "address" }],
+
     "outputs": [{ "internalType": "bool", "name": "", "type": "bool" }],
+
     "stateMutability": "view"
+
   },
+
   {
+
     "type": "function",
+
     "name": "naiveHash",
+
     "inputs": [
+
       { "internalType": "address", "name": "a", "type": "address" },
+
       { "internalType": "uint256", "name": "b", "type": "uint256" },
+
       { "internalType": "string", "name": "s", "type": "string" }
+
     ],
+
     "outputs": [{ "internalType": "bytes32", "name": "", "type": "bytes32" }],
+
     "stateMutability": "pure"
+
   },
+
   {
+
     "type": "function",
+
     "name": "owners",
+
     "inputs": [{ "internalType": "uint256", "name": "", "type": "uint256" }],
+
     "outputs": [{ "internalType": "address", "name": "", "type": "address" }],
+
     "stateMutability": "view"
+
   },
+
   {
+
     "type": "function",
+
     "name": "proposeTransaction",
+
     "inputs": [
+
       { "internalType": "address", "name": "to", "type": "address" },
+
       { "internalType": "uint256", "name": "value", "type": "uint256" },
+
       { "internalType": "bytes", "name": "data", "type": "bytes" }
+
     ],
+
     "outputs": [{ "internalType": "uint256", "name": "", "type": "uint256" }],
+
     "stateMutability": "nonpayable"
+
   },
+
   {
+
     "type": "function",
+
     "name": "proposalCount",
+
     "inputs": [],
+
     "outputs": [{ "internalType": "uint256", "name": "", "type": "uint256" }],
+
     "stateMutability": "view"
+
   },
+
   {
+
     "type": "function",
+
     "name": "proposals",
+
     "inputs": [{ "internalType": "uint256", "name": "", "type": "uint256" }],
+
     "outputs": [
+
       { "internalType": "address", "name": "proposer", "type": "address" },
+
       { "internalType": "address", "name": "to", "type": "address" },
+
       { "internalType": "uint256", "name": "value", "type": "uint256" },
+
       { "internalType": "bytes", "name": "data", "type": "bytes" },
+
       { "internalType": "uint256", "name": "confirmations", "type": "uint256" },
+
       { "internalType": "bool", "name": "executed", "type": "bool" },
+
       { "internalType": "uint256", "name": "createdAt", "type": "uint256" }
+
     ],
+
     "stateMutability": "view"
+
   },
+
   {
+
     "type": "function",
+
     "name": "removeOwner",
+
     "inputs": [{ "internalType": "address", "name": "owner", "type": "address" }],
+
     "outputs": [],
-    "stateMutability": "nonpayable"
+
   },
+
   {
-    "type": "function",
-    "name": "splitSignature",
-    "inputs": [{ "internalType": "bytes", "name": "sig", "type": "bytes" }],
-    "outputs": [
-      { "internalType": "uint8", "name": "v", "type": "uint8" },
-      { "internalType": "bytes32", "name": "r", "type": "bytes32" },
-      { "internalType": "bytes32", "name": "s", "type": "bytes32" }
-    ],
-    "stateMutability": "pure"
-  },
-  {
-    "type": "function",
-    "name": "threshold",
-    "inputs": [],
-    "outputs": [{ "internalType": "uint256", "name": "", "type": "uint256" }],
-    "stateMutability": "view"
-  },
-  { "type": "receive", "stateMutability": "payable" },
-  {
+
     "type": "event",
-    "name": "Cancelled",
-    "inputs": [
-      { "indexed": True, "internalType": "uint256", "name": "proposalId", "type": "uint256" },
-      { "indexed": True, "internalType": "address", "name": "canceller", "type": "address" }
-    ],
-    "anonymous": False
-  },
-  {
-    "type": "event",
-    "name": "Confirmed",
-    "inputs": [
-      { "indexed": True, "internalType": "uint256", "name": "proposalId", "type": "uint256" },
-      { "indexed": True, "internalType": "address", "name": "confirmer", "type": "address" }
-    ],
-    "anonymous": False
-  },
-  {
-    "type": "event",
-    "name": "Executed",
-    "inputs": [
-      { "indexed": True, "internalType": "uint256", "name": "proposalId", "type": "uint256" },
-      { "indexed": True, "internalType": "address", "name": "executor", "type": "address" },
-      { "indexed": False, "internalType": "bool", "name": "success", "type": "bool" },
-      { "indexed": False, "internalType": "bytes", "name": "result", "type": "bytes" }
-    ],
-    "anonymous": False
-  },
-  {
-    "type": "event",
-    "name": "OwnerAdded",
-    "inputs": [{ "indexed": True, "internalType": "address", "name": "newOwner", "type": "address" }],
-    "anonymous": False
-  },
-  {
-    "type": "event",
-    "name": "OwnerRemoved",
-    "inputs": [{ "indexed": True, "internalType": "address", "name": "removedOwner", "type": "address" }],
-    "anonymous": False
-  },
-  {
-    "type": "event",
+
     "name": "ProposalCreated",
+
     "inputs": [
+
       { "indexed": True, "internalType": "uint256", "name": "proposalId", "type": "uint256" },
+
       { "indexed": True, "internalType": "address", "name": "proposer", "type": "address" },
+
       { "indexed": True, "internalType": "address", "name": "to", "type": "address" },
+
       { "indexed": False, "internalType": "uint256", "name": "value", "type": "uint256" }
+
     ],
+
     "anonymous": False
+
   },
+
   {
+
     "type": "event",
+
     "name": "ThresholdChanged",
+
     "inputs": [{ "indexed": False, "internalType": "uint256", "name": "newThreshold", "type": "uint256" }],
+
     "anonymous": False
+
   }
+
 ]
 
 
