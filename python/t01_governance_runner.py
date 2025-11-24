@@ -256,7 +256,7 @@ def diff_snapshots(before: Dict, after: Dict):
 # High-level test scenarios
 # -------------------------
 def scenario_owner_addition(vul_contract, sec_contract, owners_accounts):
-    """Case 1 — Owner Addition"""
+    """Scenario 1 — Owner Addition"""
     results = []
     attacker = ATTACKER_ACCOUNT
     # Vulnerable test: attacker calls addOwner directly (no access control)
@@ -299,10 +299,10 @@ def scenario_owner_addition(vul_contract, sec_contract, owners_accounts):
     return results
 
 def scenario_owner_removal(vul_contract, sec_contract, owners_accounts):
-    """Case 2 — Owner Removal"""
+    """Scenario 2 — Owner Removal"""
     results = []
     attacker = ATTACKER_ACCOUNT
-    print(f"\n\n[{now_ts()}] CASE 2: Owner Removal — Vulnerable contract")
+    print(f"\n\n[{now_ts()}] SCENARIO 2: Owner Removal — Vulnerable contract")
     before = governance_snapshot(vul_contract); save_snapshot(before, "vulnerable_case2_before")
     try:
         # attacker removes an existing owner (vulnerable)
@@ -319,7 +319,7 @@ def scenario_owner_removal(vul_contract, sec_contract, owners_accounts):
         print(f"[{now_ts()}] Vulnerable removeOwner failed: {e}")
         results.append(("vulnerable_remove_owner_failed", str(e)))
 
-    print(f"\n\n[{now_ts()}] CASE 2: Owner Removal — Secure contract")
+    print(f"\n\n[{now_ts()}] SCENARIO 2: Owner Removal — Secure contract")
     before = governance_snapshot(sec_contract); save_snapshot(before, "secure_case2_before")
     try:
         # secure: owners must propose+confirm+timelock then executeGovernance
@@ -366,10 +366,10 @@ def scenario_owner_removal(vul_contract, sec_contract, owners_accounts):
     return results
 
 def scenario_threshold_change(vul_contract, sec_contract, owners_accounts):
-    """Case 3 — Threshold Change"""
+    """Scenario 3 — Threshold Change"""
     results = []
     attacker = ATTACKER_ACCOUNT
-    print(f"\n\n[{now_ts()}] CASE 3: Threshold Change — Vulnerable contract")
+    print(f"\n\n[{now_ts()}] SCENARIO 3: Threshold Change — Vulnerable contract")
     before = governance_snapshot(vul_contract); save_snapshot(before, "vulnerable_case3_before")
     try:
         # Attacker sets threshold to 1 directly
@@ -385,7 +385,7 @@ def scenario_threshold_change(vul_contract, sec_contract, owners_accounts):
         print(f"[{now_ts()}] Vulnerable changeThreshold failed: {e}")
         results.append(("vulnerable_change_threshold_failed", str(e)))
 
-    print(f"\n\n[{now_ts()}] CASE 3: Threshold Change — Secure contract")
+    print(f"\n\n[{now_ts()}] SCENARIO 3: Threshold Change — Secure contract")
     before = governance_snapshot(sec_contract); save_snapshot(before, "secure_case3_before")
     try:
         # secure: proposeChangeThreshold -> confirm -> wait -> executeGovernance
@@ -428,10 +428,10 @@ def scenario_threshold_change(vul_contract, sec_contract, owners_accounts):
     return results
 
 def scenario_unauthorized_attempts(vul_contract, sec_contract):
-    """Case 4 — Unauthorized Governance Attempts"""
+    """Scenario 4 — Unauthorized Governance Attempts"""
     results = []
     attacker = ATTACKER_ACCOUNT
-    print(f"\n\n[{now_ts()}] CASE 4: Unauthorized Governance Attempts — Vulnerable contract")
+    print(f"\n\n[{now_ts()}] SCENARIO 4: Unauthorized Governance Attempts — Vulnerable contract")
     before = governance_snapshot(vul_contract); save_snapshot(before, "vulnerable_case4_before")
     try:
         # Vulnerable: attacker can call changeThreshold, addOwner, removeOwner directly
@@ -450,7 +450,7 @@ def scenario_unauthorized_attempts(vul_contract, sec_contract):
         print(f"[{now_ts()}] Vulnerable unauthorized attempts failed: {e}")
         results.append(("vulnerable_unauthorized_failed", str(e)))
 
-    print(f"\n\n[{now_ts()}] CASE 4: Unauthorized Governance Attempts — Secure contract")
+    print(f"\n\n[{now_ts()}] SCENARIO 4: Unauthorized Governance Attempts — Secure contract")
     before = governance_snapshot(sec_contract); save_snapshot(before, "secure_case4_before")
     try:
         # attacker tries similar flows on secure: proposeAddOwner (should revert or be blocked)
@@ -482,10 +482,10 @@ def scenario_unauthorized_attempts(vul_contract, sec_contract):
     return results
 
 def scenario_inconsistent_proposal_state(vul_contract, sec_contract, owners_accounts):
-    """Case 5 — Inconsistent Proposal State"""
+    """Scenario 5 — Inconsistent Proposal State"""
     results = []
     attacker = ATTACKER_ACCOUNT
-    print(f"\n\n[{now_ts()}] CASE 5: Inconsistent Proposal State — Vulnerable contract")
+    print(f"\n\n[{now_ts()}] SCENARIO 5: Inconsistent Proposal State — Vulnerable contract")
     before = governance_snapshot(vul_contract); save_snapshot(before, "vulnerable_case5_before")
     try:
         # Create a proposal and have attacker cancel or remove owners mid-way
@@ -511,7 +511,7 @@ def scenario_inconsistent_proposal_state(vul_contract, sec_contract, owners_acco
         print(f"[{now_ts()}] Vulnerable inconsistent state flow failed: {e}")
         results.append(("vulnerable_inconsistent_failed", str(e)))
 
-    print(f"\n\n[{now_ts()}] CASE 5: Inconsistent Proposal State — Secure contract")
+    print(f"\n\n[{now_ts()}] SCENARIO 5: Inconsistent Proposal State — Secure contract")
     before = governance_snapshot(sec_contract); save_snapshot(before, "secure_case5_before")
     try:
         # Secure: create proposal to remove owner then attempt to remove them directly (should fail)
@@ -552,38 +552,6 @@ def scenario_inconsistent_proposal_state(vul_contract, sec_contract, owners_acco
         results.append(("secure_inconsistent_failed", str(e)))
     return results
 
-def scenario_integrity_validation(vul_contract, sec_contract, owners_accounts):
-    """Case 6 — Governance Integrity Validation (signatures/nonces)"""
-    results = []
-    print(f"\n\n[{now_ts()}] CASE 6: Governance Integrity Validation")
-    # For vulnerable: if executeWithSignature exists and has no nonce, test replay
-    try:
-        before = governance_snapshot(vul_contract); save_snapshot(before, "vulnerable_case6_before")
-        # Prepare an off-chain signature calling executeWithSignature - vulnerable has naive signature flow
-        # This portion requires generating a signature from attacker or owner private key. Implementation depends on ABI.
-        # We'll attempt only if the function exists.
-        if hasattr(vul_contract.functions, "executeWithSignature"):
-            print(f"[{now_ts()}] Vulnerable supports executeWithSignature — attempting naive signature replay test")
-            # This is complex to implement generically; log and skip with note
-            results.append(("vulnerable_signature_replay", "SKIPPED - implement per-project signature format"))
-        else:
-            results.append(("vulnerable_signature_replay", "NOT_SUPPORTED"))
-    except Exception as e:
-        results.append(("vulnerable_signature_replay_error", str(e)))
-
-    try:
-        before = governance_snapshot(sec_contract); save_snapshot(before, "secure_case6_before")
-        # Secure supports nonces & EIP-712; we attempt a simple flow if environment provides one owner private key
-        if hasattr(sec_contract.functions, "executeWithSignature") and len(OWNER_ACCOUNTS) > 0:
-            print(f"[{now_ts()}] Secure supports executeWithSignature - constructing example signature omitted (skipped)")
-            results.append(("secure_signature_replay", "SKIPPED - run off-chain signature test manually"))
-        else:
-            results.append(("secure_signature_replay", "NOT_SUPPORTED_OR_NO_KEYS"))
-    except Exception as e:
-        results.append(("secure_signature_replay_error", str(e)))
-
-    return results
-
 # -------------------------
 # Driver: load contracts and run scenarios
 # -------------------------
@@ -607,7 +575,6 @@ def run_all():
         summary.extend(scenario_threshold_change(vul_contract, sec_contract, owners_accounts))
         summary.extend(scenario_unauthorized_attempts(vul_contract, sec_contract))
         summary.extend(scenario_inconsistent_proposal_state(vul_contract, sec_contract, owners_accounts))
-        summary.extend(scenario_integrity_validation(vul_contract, sec_contract, owners_accounts))
     except Exception as e:
         print(f"[{now_ts()}] Error during test run: {e}\n{traceback.format_exc()}")
 

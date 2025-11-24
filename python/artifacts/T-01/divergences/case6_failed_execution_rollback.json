@@ -1,0 +1,16 @@
+{
+  "secure_diffs": {
+    "owners_added": [],
+    "owners_removed": [],
+    "threshold_after": 2,
+    "threshold_before": 2
+  },
+  "secure_executed_flag": true,
+  "vulnerable_diffs": {
+    "owners_added": [],
+    "owners_removed": [],
+    "threshold_after": 1,
+    "threshold_before": 1
+  },
+  "vulnerable_executed_flag": true
+}
