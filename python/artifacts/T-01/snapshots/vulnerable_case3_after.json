@@ -1,8 +1,8 @@
 {
   "owners": [
-    "0x099BA97a37FA019c064a2517026e3c2Ea8DB9964",
+    "0xcc7a3706Df7FCcFbF99f577382BC62C0e565FcF0",
     "0x513B1d92C2CA2d364B9d99ABabA485D298bdCbea",
     "0xAB168F094e0037eDA6562da1d4784bD44B1860A1"
   ],
-  "threshold": 1
+  "threshold": 3
 }

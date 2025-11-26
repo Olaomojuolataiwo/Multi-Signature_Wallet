@@ -13,7 +13,6 @@ import os
 import json
 import time
 import traceback
-
 from pathlib import Path
 from typing import Dict, Optional, Any, List, Tuple
 from web3.datastructures import AttributeDict
@@ -130,7 +129,6 @@ def pretty_print_state(label: str, contract, proposal_id: Optional[int] = None):
 
     if proposal_id is not None:
         try:
-
             p = contract.functions.getProposal(proposal_id).call()
             # Generic tuple handling:
             # Vulnerable getProposal returns (proposer,to,value,data,confirmations,executed,createdAt)
@@ -357,12 +355,12 @@ def scenario_owner_addition(vul_contract, sec_contract, owners_accounts):
         print(f"[{now_ts()}] ATTACKER ATTEMPTING UNAUTHORISED ADD OWNER CALL", flush=True)
         func = vul_contract.functions.addOwner(candidate)
         data = func._encode_transaction_data()
-        rec = build_tx_and_send(attacker, vul_contract.address, data)
-        receipt = w3.eth.wait_for_transaction_receipt(rec["transactionHash"])
+        rec = build_tx_and_send(attacker.address, vul_contract.address, data)
+        receipt = w3.eth.wait_for_transaction_receipt(rec)
         if receipt.status == 1:
-            print(f"[{now_ts()}] [SUCCESS] {label} executed successfully as expected:", rec["transactionHash"].hex(), flush=True)
+            print(f"[{now_ts()}] [SUCCESS] {label} executed successfully as expected: {rec.hex()}", flush=True)
         else:
-            print(f"[{now_ts()}] [REVERT]  {label} reverted unexpectedly:", rec["transactionHash"].hex(), flush=True)
+            print(f"[{now_ts()}] [REVERT]  {label} reverted unexpectedly: {rec.hex()}", flush=True)
         print(f"[{now_ts()}] Taking Snapshot on VULNERABLE WALLET after attacker attempts addOwner", flush=True)
         after_v = governance_snapshot(vul_contract)
         save_snapshot(after_v, "vulnerable_case1_after")
@@ -390,13 +388,13 @@ def scenario_owner_addition(vul_contract, sec_contract, owners_accounts):
         func = sec_contract.functions.proposeAddOwner(candidate)
         data = func._encode_transaction_data()
         try:
-            rec_s = build_tx_and_send(attacker, sec_contract.address, data)
+            rec_s = build_tx_and_send(attacker.address, sec_contract.address, data)
             save_json(rec_s, ARTIFACT_DIR / "receipts" / f"secure_case1_add_{rec_s['transactionHash'].hex()}.json")
-            receipt = w3.eth.wait_for_transaction_receipt(rec_s["transactionHash"])
+            receipt = w3.eth.wait_for_transaction_receipt(rec_s)
             if receipt.status == 1:
-                print(f"[{now_ts()}] [SUCCESS] {label} unexpectedly successfully :", rec_s["transactionHash"].hex(), flush=True)
+                print(f"[{now_ts()}] [SUCCESS] {label} unexpectedly successfully : {rec_s.hex()}", flush=True)
             else:
-                print(f"[{now_ts()}] [REVERT] {label} reverted as expected:", rec_s["transactionHash"].hex(), flush=True)
+                print(f"[{now_ts()}] [REVERT]  {label} reverted as expected: {rec_s.hex()}", flush=True)
 
         except Exception as err:
             # Expected: revert or failure
@@ -409,7 +407,7 @@ def scenario_owner_addition(vul_contract, sec_contract, owners_accounts):
         pretty_print_state("SECURE AFTER ADD (ATTEMPT)", sec_contract)
         diffs = diff_snapshots(before_s, after_s)
         print(f"[{now_ts()}] Secure diffs: {diffs}")
-        results.append(("secure_add_owner_by_attacker", rec_s, diffs))
+        results.append(("secure_add_owner_by_attacker", rec, diffs))
     except Exception as e:
         print(f"[{now_ts()}] Secure proposeAddOwner (attacker) failed as expected: {e}")
         results.append(("secure_add_owner_by_attacker_failed", str(e)))
@@ -433,7 +431,7 @@ def scenario_owner_removal(vul_contract, sec_contract, owners_accounts):
     attacker = ATTACKER_ACCOUNT
     print(f"\n\n[{now_ts()}] SCENARIO 2: Owner Removal — Vulnerable contract")
     print(f"[{now_ts()}] Taking Snapshot on VULNERABLE WALLET before attacker attempts removeOwner", flush=True)
-    before_v = governance_snapshot(vul_contract)
+    before_v = governance_snapshot(vul_contract); save_snapshot(before_v, "vulnerable_case2_before")
     save_snapshot(before_v, "vulnerable_case2_before")
     print(f"[{now_ts()}] VULNERABLE WALLET snapshot before attacker attempts removeOwner", before_v, flush=True)
 
@@ -442,12 +440,12 @@ def scenario_owner_removal(vul_contract, sec_contract, owners_accounts):
         target_owner = owners_accounts[0].address
         func = vul_contract.functions.removeOwner(target_owner)
         data = func._encode_transaction_data()
-        rec = build_tx_and_send(attacker, vul_contract.address, data)
-        receipt = w3.eth.wait_for_transaction_receipt(rec["transactionHash"])
+        rec = build_tx_and_send(attacker.address, vul_contract.address, data)
+        receipt = w3.eth.wait_for_transaction_receipt(rec)
         if receipt.status == 1:
-            print(f"[{now_ts()}] [SUCCESS] {label} executed successfully as expected: {rec['transactionHash'].hex()}", flush=True)
+            print(f"[{now_ts()}] [SUCCESS] {label} executed successfully as expected: {rec.hex()}", flush=True)
         else:
-            print(f"[{now_ts()}] [REVERT]  {label} reverted unexpectedly: {rec['transactionHash'].hex()}", flush=True)
+            print(f"[{now_ts()}] [REVERT]  {label} reverted unexpectedly: {rec.hex()}", flush=True)
 
         print(f"[{now_ts()}] Taking Snapshot on VULNERABLE WALLET after attacker attempts removeOwner", flush=True)
         after_v = governance_snapshot(vul_contract); save_snapshot(after_v, "vulnerable_case2_after")
@@ -467,13 +465,13 @@ def scenario_owner_removal(vul_contract, sec_contract, owners_accounts):
         data = func._encode_transaction_data()
 
         try:
-            rec_s = build_tx_and_send(attacker, sec_contract.address, data)
-            receipt = w3.eth.wait_for_transaction_receipt(rec_s["transactionHash"])
+            rec_s = build_tx_and_send(attacker.address, sec_contract.address, data)
+            receipt = w3.eth.wait_for_transaction_receipt(rec_s)
 
             if receipt.status == 1:
-                print(f"[{now_ts()}] [SUCCESS] {label} UNEXPECTED SUCCESS: {rec_s['transactionHash'].hex()}", flush=True)
+                print(f"[{now_ts()}] [SUCCESS] {label} UNEXPECTED SUCCESS: {rec_s.hex()}", flush=True)
             else:
-                print(f"[{now_ts()}] [REVERT]  {label} reverted as expected: {rec_s['transactionHash'].hex()}", flush=True)
+                print(f"[{now_ts()}] [REVERT]  {label} reverted as expected: {rec_s.hex()}", flush=True)
 
         except Exception as err:
             print(f"[{now_ts()}] SECURE proposeRemoveOwner reverted/failed as expected: {err}", flush=True)
@@ -505,7 +503,7 @@ def scenario_threshold_change(vul_contract, sec_contract, owners_accounts):
     attacker = ATTACKER_ACCOUNT
     print(f"\n\n[{now_ts()}] SCENARIO 3: Threshold Change — Vulnerable contract")
     print(f"[{now_ts()}] Taking Snapshot on VULNERABLE WALLET before attacker attempts Threshold Change", flush=True) 
-    before_v = governance_snapshot(vul_contract)
+    before_v = governance_snapshot(vul_contract); save_snapshot(before_v, "vulnerable_case3_before")
     save_snapshot(before_v, "vulnerable_case3_before")
     print(f"[{now_ts()}] VULNERABLE WALLET snapshot before attacker attempts thresholdChange", before_v, flush=True)
 
@@ -516,12 +514,12 @@ def scenario_threshold_change(vul_contract, sec_contract, owners_accounts):
         print(f"[{now_ts()}] ATTACKER ATTEMPTING UNAUTHORISED THRESHOLD INCREASE TO {new}", flush=True)
         func = vul_contract.functions.changeThreshold(new)
         data = func._encode_transaction_data()
-        rec = build_tx_and_send(attacker, vul_contract.address, data)
-        receipt = w3.eth.wait_for_transaction_receipt(rec["transactionHash"])
+        rec = build_tx_and_send(attacker.address, vul_contract.address, data)
+        receipt = w3.eth.wait_for_transaction_receipt(rec)
         if receipt.status == 1:
-            print(f"[{now_ts()}] [SUCCESS] {label} executed successfully as expected: {rec['transactionHash'].hex()}", flush=True)
+            print(f"[{now_ts()}] [SUCCESS] {label} executed successfully as expected: {rec.hex()}", flush=True)
         else:
-            print(f"[{now_ts()}] [REVERT]  {label} reverted unexpectedly: {rec['transactionHash'].hex()}", flush=True)
+            print(f"[{now_ts()}] [REVERT]  {label} reverted unexpectedly: {rec.hex()}", flush=True)
         print(f"[{now_ts()}] Taking Snapshot on VULNERABLE WALLET after attacker attempts thresholdChange", flush=True)
         after_v = governance_snapshot(vul_contract); save_snapshot(after_v, "vulnerable_case3_after")
         diffs = diff_snapshots(before_v, after_v)
@@ -533,7 +531,7 @@ def scenario_threshold_change(vul_contract, sec_contract, owners_accounts):
 
     print(f"\n\n[{now_ts()}] SCENARIO 3: Threshold Change — Secure contract")
     print(f"[{now_ts()}] Taking Snapshot on SECURE WALLET before attacker attempts Threshold Change", flush=True)
-    before_s = governance_snapshot(sec_contract)
+    before_s = governance_snapshot(sec_contract); save_snapshot(before_s, "secure_case3_before")
     save_snapshot(before_s, "secure_case3_before")
     print(f"[{now_ts()}] SECURE WALLET snapshot before attacker attempts thresholdChange", before_s, flush=True)
 
@@ -548,13 +546,13 @@ def scenario_threshold_change(vul_contract, sec_contract, owners_accounts):
         data = func._encode_transaction_data()
         try:
             # this SHOULD revert – attacker is not an owner
-            rec_s = build_tx_and_send(attacker, sec_contract.address, data)
-            receipt = w3.eth.wait_for_transaction_receipt(rec_s["transactionHash"])
+            rec_s = build_tx_and_send(attacker.address, sec_contract.address, data)
+            receipt = w3.eth.wait_for_transaction_receipt(rec_s)
 
             if receipt.status == 1:
-                print(f"[{now_ts()}] [SUCCESS] UNEXPECTED SUCCESS: {rec_s['transactionHash'].hex()}", flush=True)
+                print(f"[{now_ts()}] [SUCCESS] UNEXPECTED SUCCESS: {rec_s.hex()}", flush=True)
             else:
-                print(f"[{now_ts()}] [REVERT]  proposeChangeThreshold reverted as expected: {rec_s['transactionHash'].hex()}", flush=True)
+                print(f"[{now_ts()}] [REVERT]  proposeChangeThreshold reverted as expected: {rec_s.hex()}", flush=True)
 
         except Exception as err:
             print(f"[{now_ts()}] SECURE proposeChangeThreshold reverted/failed as expected: {err}", flush=True)
@@ -563,7 +561,7 @@ def scenario_threshold_change(vul_contract, sec_contract, owners_accounts):
         after_s = governance_snapshot(sec_contract); save_snapshot(after_s, "secure_case3_after")
         diffs = diff_snapshots(before_s, after_s)
         print(f"[{now_ts()}] Secure diffs: {diffs}")
-        results.append(("secure_change_threshold_proposal", rec_s, diffs))
+        results.append(("secure_change_threshold_proposal", rec3, diffs))
     except Exception as e:
         print(f"[{now_ts()}] Secure proposeChangeThreshold failed: {e}")
         results.append(("secure_change_threshold_failed", str(e)))
@@ -583,11 +581,13 @@ def scenario_inconsistent_proposal_state(vul_contract, sec_contract, owners_acco
     vul_contract = w3.eth.contract(address=vuln_addr, abi=vuln_abi)
     sec_contract = w3.eth.contract(address=sec_addr, abi=secure_abi)
 
+
+
     results = []
     attacker = ATTACKER_ACCOUNT
     print(f"\n\n[{now_ts()}] SCENARIO 4: Inconsistent Proposal State — Vulnerable contract")
     print(f"[{now_ts()}] Taking Snapshot on VULNERABLE WALLET before attacker attempts to induce Inconsistent Proposal State", flush=True)
-    before_v = governance_snapshot(vul_contract)
+    before_v = governance_snapshot(vul_contract); save_snapshot(before_v, "vulnerable_case3_before")
     save_snapshot(before_v, "vulnerable_case4_before")
     print(f"[{now_ts()}] VULNERABLE WALLET snapshot before attacker attempts to induce Inconsistent Proposal State", before_v, flush=True)
 
@@ -599,7 +599,7 @@ def scenario_inconsistent_proposal_state(vul_contract, sec_contract, owners_acco
         func = vul_contract.functions.proposeTransaction(vul_contract.address, 0, b"")
         data = func._encode_transaction_data()
         rec = build_tx_and_send(OWNER_ACCOUNTS[0], vul_contract.address, data)
-        print(f"[{now_ts()}] Proposed Transaction", rec["transactionHash"].hex(), flush=True)
+        print(f"[{now_ts()}] Proposed Transaction", rec.hex(), flush=True)
         prop_id = vul_contract.functions.proposalCount().call()
         # Attacker removes owner who confirmed earlier
         # Confirm by owner[0]
@@ -607,33 +607,34 @@ def scenario_inconsistent_proposal_state(vul_contract, sec_contract, owners_acco
         func = vul_contract.functions.confirmTransaction(prop_id)
         data = func._encode_transaction_data()
         rec2 = build_tx_and_send(OWNER_ACCOUNTS[0], vul_contract.address, data)
-        print(f"\n\n[{now_ts()}] Confirmed Proposal for valid transaction on Vulnerable contract:", rec2["transactionHash"].hex(), flush=True)
+        print(f"\n\n[{now_ts()}] Confirmed Proposal for valid transaction on Vulnerable contract:", rec2.hex(), flush=True)
         # Attacker removes that owner
         print(f"\n\n[{now_ts()}] Attacker attempting to remove owner")
         target_owner = OWNER_ACCOUNTS[0].address
         func = vul_contract.functions.removeOwner(target_owner)
         data = func._encode_transaction_data()
-        rec3 = build_tx_and_send(attacker, vul_contract.address, data)
-        receipt = w3.eth.wait_for_transaction_receipt(rec3["transactionHash"])
+        rec3 = build_tx_and_send(attacker.address, vul_contract.address, data)
+        receipt = w3.eth.wait_for_transaction_receipt(rec3)
         if receipt.status == 1:
-            print(f"[{now_ts()}] [SUCCESS] Attacker Successfully Removes Owner as Expected: {rec3['transactionHash'].hex()}", flush=True)
+            print(f"[{now_ts()}] [SUCCESS] Attacker Successfully Removes Owner as Expected: {rec3.hex()}", flush=True)
         else:
-            print(f"[{now_ts()}] [REVERT]  Attacker attmpt fails unexpectedly: {rec3['transactionHash'].hex()}", flush=True)
+            print(f"[{now_ts()}] [REVERT]  Attacker attmpt fails unexpectedly: {rec3.hex()}", flush=True)
         try:
             print(f"[{now_ts()}] Attempting to EXECUTE vulnerable proposal {prop_id}")
             func = vul_contract.functions.executeTransaction(prop_id)
             data = func._encode_transaction_data()
             rec_exec = build_tx_and_send(OWNER_ACCOUNTS[0], vul_contract.address, data)
-            receipt_exec = w3.eth.wait_for_transaction_receipt(rec_exec["transactionHash"])
+            receipt_exec = w3.eth.wait_for_transaction_receipt(rec_exec)
             if receipt_exec.status == 1:
-                print(f"[{now_ts()}] [SUCCESS] Vulnerable executeTransaction unexpectedly succeeded: {rec_exec['transactionHash'].hex()}")
+                print(f"[{now_ts()}] [SUCCESS] Vulnerable executeTransaction unexpectedly succeeded: {rec_exec.hex()}")
             else:
-                print(f"[{now_ts()}] [REVERT] Vulnerable executeTransaction reverted: {rec_exec['transactionHash'].hex()}")
+                print(f"[{now_ts()}] [REVERT] Vulnerable executeTransaction reverted: {rec_exec.hex()}")
+
         except Exception as e:
             print(f"[{now_ts()}] Vulnerable executeTransaction threw exception: {e}")
 
         print(f"[{now_ts()}] Taking Snapshot on VULNERABLE WALLET after attacker attempts to induce Inconsistent Proposal State", flush=True)
-        after_v = governance_snapshot(vul_contract); save_snapshot(after_v, "vulnerable_case4_after")
+        after_v = governance_snapshot(vul_contract); save_snapshot(after_v, "vulnerable_case5_after")
         diffs = diff_snapshots(before_v, after_v)
         results.append(("vulnerable_inconsistent", (rec, rec2, rec3), diffs))
     except Exception as e:
@@ -652,7 +653,7 @@ def scenario_inconsistent_proposal_state(vul_contract, sec_contract, owners_acco
         func = sec_contract.functions.proposeTransaction(sec_addr, 0, b"")
         data = func._encode_transaction_data()
         rec_prop = build_tx_and_send(proposer, sec_contract.address, data)
-        print(f"[{now_ts()}] Proposed Transaction", rec_prop["transactionHash"].hex(), flush=True)
+        print(f"[{now_ts()}] Proposed Transaction", rec_prop.hex(), flush=True)
         proposal_id = sec_contract.functions.proposalCount().call()
         print(f"[{now_ts()}] Secure proposal created, ID = {proposal_id}")
 
@@ -662,7 +663,7 @@ def scenario_inconsistent_proposal_state(vul_contract, sec_contract, owners_acco
         func = sec_contract.functions.confirmTransaction(proposal_id)
         data = func._encode_transaction_data()
         rec_conf = build_tx_and_send(owners_accounts[1], sec_contract.address, data)
-        print(f"\n\n[{now_ts()}] Confirmed Proposal for valid transaction on Secure contract:", rec_conf["transactionHash"].hex(), flush=True)
+        print(f"\n\n[{now_ts()}] Confirmed Proposal for valid transaction on Secure contract:", rec_conf.hex(), flush=True)
 
         # Step 3 — attacker attempts illegal direct removeOwner
         print(f"\n\n[{now_ts()}] Attacker attempting to remove owner")
@@ -670,15 +671,14 @@ def scenario_inconsistent_proposal_state(vul_contract, sec_contract, owners_acco
         try:
             func = sec_contract.functions.removeOwner(target_remove)
             data = func._encode_transaction_data()
-            rec_remove = build_tx_and_send(attacker, sec_contract.address, data)
-            receipt = w3.eth.wait_for_transaction_receipt(rec_remove["transactionHash"])
+            rec_remove = build_tx_and_send(attacker.address, sec_contract.address, data)
+            receipt = w3.eth.wait_for_transaction_receipt(rec_remove)
             if receipt.status == 1:
-                print(f"[{now_ts()}] [SUCCESS] Attacker Unexpectedly Successfully in Removing Owner: {rec_remove['transactionHash'].hex()}", flush=True)
+                print(f"[{now_ts()}] [SUCCESS] Attacker Unexpectedly Successfully in Removing Owner: {rec_remove.hex()}", flush=True)
             else:
-                print(f"[{now_ts()}] [REVERT]  Attacker attempt fails as expected: {rec_remove['transactionHash'].hex()}", flush=True)
+                print(f"[{now_ts()}] [REVERT]  Attacker attempt fails as expected: {rec_remove.hex()}", flush=True)
             attempts["remove_direct_by_attacker"] = rec_remove
         except Exception as e:
-            print(f"[{now_ts()}] Attacker attempt fails as expected: {e}")
             attempts["remove_direct_by_attacker_error"] = str(e)
 
         # Step 4 — confirm by others to reach threshold
@@ -688,7 +688,7 @@ def scenario_inconsistent_proposal_state(vul_contract, sec_contract, owners_acco
                 func = sec_contract.functions.confirmTransaction(proposal_id)
                 data = func._encode_transaction_data()
                 rec2 = build_tx_and_send(owners_accounts[i], sec_contract.address, data)
-                print(f"\n\n[{now_ts()}] Confirmed Proposal for valid transaction on Vulnerable contract:", rec2["transactionHash"].hex(), flush=True)
+                print(f"\n\n[{now_ts()}] Confirmed Proposal for valid transaction on Vulnerable contract:", rec2.hex(), flush=True)
             except Exception:
                 pass
 
@@ -706,17 +706,17 @@ def scenario_inconsistent_proposal_state(vul_contract, sec_contract, owners_acco
 
         # Step 6 — execute governance
         print(f"\n\n[{now_ts()}] Proposer attempting to execute valid transaction on Secure contract")
-        func = sec_contract.functions.executeTransaction(proposal_id)
+        func = sec_contract.functions.executeGovernance(proposal_id)
         data = func._encode_transaction_data()
         rec_exec = build_tx_and_send(proposer, sec_contract.address, data)
-        receipt = w3.eth.wait_for_transaction_receipt(rec_exec["transactionHash"])
+        receipt = w3.eth.wait_for_transaction_receipt(rec_exec)
         if receipt.status == 1:
-            print(f"[{now_ts()}] [SUCCESS] Transaction Successfully Executed as Expected: {rec_exec['transactionHash'].hex()}", flush=True)
+            print(f"[{now_ts()}] [SUCCESS] Transaction Successfully Executed as Expected: {rec_exec.hex()}", flush=True)
         else:
-            print(f"[{now_ts()}] [REVERT]  Transaction Execution fails as unexpectedly: {rec_exec['transactionHash'].hex()}", flush=True)
+            print(f"[{now_ts()}] [REVERT]  Transaction Execution fails as unexpectedly: {rec_exec.hex()}", flush=True)
         print(f"[{now_ts()}] Taking Snapshot on SECURE WALLET after attacker attempts to induce Inconsistent Proposal State", flush=True)
         after_s = governance_snapshot(sec_contract); save_snapshot(after_s, "secure_case4_after")
-        diffs = diff_snapshots(before_s, after_s)
+        diffs = diff_snapshots(before, after)
         results.append(("secure_inconsistent", (rec, attempts), diffs))
     except Exception as e:
         print(f"[{now_ts()}] Secure inconsistent proposal state flow failed: {e}\n{traceback.format_exc()}")
