@@ -99,31 +99,115 @@ F --> FC[Invariant Enforcement]
 This table aggregates all divergences between the secure and vulnerable implementations across all three test suites.
 
 4.1 Governance-Level Divergences
-Governance Action	                        Vulnerable Behavior	                Secure Behavior
-Add owner	                                Anyone can add themselves	        Must follow propose → confirm → execute
-Remove owner	                                Anyone can remove owners	        Owners only + confirmation threshold
-Change threshold	                        Arbitrary EOA can hijack threshold	Strict access + lifecycle invariants
-Proposal state after owner mutation	        Becomes invalid / inconsistent	        Locked, cannot be corrupted
-Governance mutation during active proposals	Allowed	                                Rejected
+<table>
+<thead>
+<tr>
+<th>Governance Action</th>
+<th>Vulnerable Behavior</th>
+<th>Secure Behavior</th>
+</tr>
+</thead>
+
+<tbody>
+<tr>
+<td>Add Owner</td>
+<td>Anyone can add themselves as an owner.<br>Direct mutation without proposal flow.</td>
+<td>Requires propose → confirm → execute.<br>Strict ownership checks enforced.</td>
+</tr>
+
+<tr>
+<td>Remove Owner</td>
+<td>Any EOA can remove an existing owner.<br>No verification of caller privileges.</td>
+<td>Only valid owners may initiate removal.<br>Requires threshold confirmations.</td>
+</tr>
+
+<tr>
+<td>Change Threshold</td>
+<td>Attacker can arbitrarily raise/lower threshold.</td>
+<td>Threshold changes must follow governance lifecycle.<br>Caller must be a valid owner.</td>
+</tr>
+
+<tr>
+<td>Proposal State Consistency</td>
+<td>Owner removal corrupts proposal confirmations.<br>Execution becomes inconsistent.</td>
+<td>Owner set locked during proposal lifecycle.<br>Execution remains deterministic.</td>
+</tr>
+</tbody>
+</table>
+
+<table>
+<thead>
+<tr>
+<th>Execution Scenario</th>
+<th>Vulnerable</th>
+<th>Secure</th>
+</tr>
+</thead>
 
 4.2 Execution-Layer Divergences
-Runtime Scenario	      Vulnerable	                        Secure
-Unchecked external calls      Silent failure, partial state commit	Atomic revert
-Gas exhaustion in batch	      Partial progress, state corruption	Full revert, consistency preserved
-Reentrancy callback	      Attack succeeds (duplicate events)	Blocked (nonReentrant + flags)
-Execution ordering	      Non-deterministic	                        Deterministic, guarded
-Callback state access	      Unsafe	                                Validated, sequenced
+<tbody>
+<tr>
+<td>Unchecked External Call</td>
+<td>Silent revert, partial state commit.</td>
+<td>Atomic revert ensures consistency.</td>
+</tr>
+
+<tr>
+<td>Gas Exhaustion in Batch</td>
+<td>Partial progress and state drift.</td>
+<td>Preflight validation + full revert.</td>
+</tr>
+
+<tr>
+<td>Reentrancy</td>
+<td>Nested calls succeed.<br>Duplicate events.</td>
+<td>NonReentrant guard blocks attack.</td>
+</tr>
+
+<tr>
+<td>Execution Ordering</td>
+<td>Non-deterministic runtime behavior.</td>
+<td>Strict sequencing and validation.</td>
+</tr>
+</tbody>
+</table>
 
 4.3 Signature & Replay Divergences
-Validation Area	        Vulnerable	Secure
-Domain separation	❌ No	        ✔️ Strict EIP-712
-Chain ID binding	❌ None	        ✔️ Enforced
-Contract binding	❌ None	        ✔️ verifiedContract
-Replay protection	❌ No nonces	✔️ Per-owner nonce
-Overflow behavior	❌ Silent	✔️ Reverts
-Mutated calldata	Executes	Reverts
-Forged signatures	Accepted	Rejected
-Mismatched struct	Accepted	Rejected
+<table>
+<thead>
+<tr>
+<th>Validation Area</th>
+<th>Vulnerable</th>
+<th>Secure</th>
+</tr>
+</thead>
+
+<tbody>
+<tr>
+<td>Domain Separator</td>
+<td>None.<br>Signatures portable across contracts.</td>
+<td>Strict EIP-712 domain binding.</td>
+</tr>
+
+<tr>
+<td>Replay Protection</td>
+<td>No nonce.<br>Signature reusable indefinitely.</td>
+<td>Per-owner nonce.<br>Replay blocked.</td>
+</tr>
+
+<tr>
+<td>Calldata Mutation</td>
+<td>Executes mutated payload.</td>
+<td>Signature mismatch → revert.</td>
+</tr>
+
+<tr>
+<td>Overflow Handling</td>
+<td>Silent overflow/underflow.</td>
+<td>Checked arithmetic → revert.</td>
+</tr>
+</tbody>
+</table>
 
 5. Cryptographic Guarantees (Secure Wallet)
 ✔ EIP-712 with full domain separation
