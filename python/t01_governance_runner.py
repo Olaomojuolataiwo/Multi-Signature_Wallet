@@ -34,7 +34,7 @@ except Exception:
 # CONFIG - Edit these
 # -------------------------
 RPC_URL = os.getenv("RPC_URL")
-CHAIN_ID = 11155111  # example Sepolia chain id; change to your network
+CHAIN_ID = 11155111
 OWNER_PRIVATE_KEYS = os.getenv("OWNER_PRIVATE_KEYS").split()
 ATTACKER_PRIVATE_KEY = os.getenv("ATTACKER_PRIVATE_KEY")
 VULN_ADDR = os.getenv("VULNERABLE_ADDRESS")
@@ -45,10 +45,6 @@ secure_abi = None
 VULNERABLE_ABI_PATH = "../out/VulnerableMultiSig.sol/VulnerableMultiSig.json"
 SECURE_ABI_PATH = "../out/SecureMultiSig.sol/SecureMultiSig.json"
 
-
-# If you want the script to compile solidity sources if ABI not provided:
-DEFAULT_SECURE_SOURCE = "/mnt/data/SecureMultiSig.txt"  # your uploaded file path
-DEFAULT_VULNERABLE_SOURCE = None  # set if you have vulnerable source file locally
 
 # Transaction parameters
 GAS = 5_000_000
@@ -179,34 +175,6 @@ if ATTACKER_ACCOUNT:
     print(f"[{now_ts()}] Attacker account loaded: {ATTACKER_ACCOUNT.address}")
 
 # -------------------------
-# Compile helpers (optional)
-# -------------------------
-def compile_sol(source_path: str, contract_name: str = None) -> Dict[str, Any]:
-    if not SOLCX_AVAILABLE:
-        raise RuntimeError("solcx not available; provide ABI instead or install py-solc-x")
-    solcx.install_solc("0.8.30")
-    with open(source_path, "r") as f:
-        src = f.read()
-    # crude compile all contracts in file
-    compiled = solcx.compile_source(src, output_values=["abi", "bin"], solc_version="0.8.30")
-    # If contract_name provided, select that; otherwise take first
-    if contract_name:
-        key = None
-        for k in compiled:
-            if k.endswith(contract_name):
-                key = k
-                break
-        if not key:
-            raise RuntimeError(f"Contract {contract_name} not found in compiled output")
-    else:
-        # take first key
-        key = next(iter(compiled.keys()))
-    return {
-        "abi": compiled[key]["abi"],
-        "bin": compiled[key]["bin"]
-    }
-
-# -------------------------
 # Load ABIs either from file or compile source
 # -------------------------
 def load_abis():
@@ -257,7 +225,7 @@ def build_tx_and_send(account, to, data, value=0):
         "data": data,
         "nonce": nonce,
         "chainId": w3.eth.chain_id,
-        "type": 2,  # EIP-1559
+        "type": 2,
     }
 
     # ---- Fee estimation (Sepolia EIP-1559 compatible) ----
@@ -280,21 +248,6 @@ def build_tx_and_send(account, to, data, value=0):
     receipt = w3.eth.wait_for_transaction_receipt(tx_hash)
 
     print(f"[{now_ts()}] Sent tx {tx_hash.hex()} → mined in block {receipt.blockNumber}")
-    return receipt
-
-def call_function_and_log(contract, fn_name: str, args: tuple, sender_acct: Account=None, value=0):
-    """
-    Call a contract function that writes state (send tx) - signs and sends using sender_acct.
-    Logs tx hash and receipt and stores to artifacts.
-    """
-    func = getattr(contract.functions, fn_name)(*args)
-    data = func._encode_transaction_data()
-    to = contract.address
-    sender = sender_acct if sender_acct else OWNER_ACCOUNTS[0]
-    receipt = build_tx_and_send(sender, to, data, value=value)
-    # Save receipt
-    txh = receipt["transactionHash"].hex()
-    save_json(receipt, ARTIFACT_DIR / "receipts" / f"{txh}.json")
     return receipt
 
 def safe_call_read(contract, fn_name: str, args: tuple=()):
@@ -732,7 +685,7 @@ def run_all():
     vul_contract = None;
     sec_contract = None;
     summary = []
-    load_abis()   # <-- IMPORTANT
+    load_abis()
     print(f"[{now_ts()}] ABIs loaded")
     # Execute scenarios; each scenario returns a list of results
     try:
