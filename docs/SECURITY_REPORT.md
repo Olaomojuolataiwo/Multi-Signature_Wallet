@@ -9,23 +9,24 @@ Last Updated: 2025-11-26
 
 This report documents the complete security evaluation of a custom multi-signature wallet system consisting of:
 
-SecureMultiSig — a hardened, production-grade multisig
+. SecureMultiSig — a hardened, production-grade multisig
 
-VulnerableMultiSig — intentionally insecure for differential testing
+. VulnerableMultiSig — intentionally insecure for differential testing
 
 Malicious external contracts to simulate adversarial behavior
 
 The test framework evaluates the three pillars of wallet correctness:
 
-Governance-Layer Security
+. Governance-Layer Security
 
-Execution-Layer Runtime Safety
+. Execution-Layer Runtime Safety
 
-Signature Integrity / Replay-Resistance / Structural Validation
+. Signature Integrity / Replay-Resistance / Structural Validation
 
 Each test suite compares Secure vs. Vulnerable behavior across dozens of adversarial scenarios, using real on-chain transactions, state snapshots, and forensic traces.
 
 2. Repository Structure
+
 %% Repository Structure Diagram
 graph TD
 
@@ -66,6 +67,7 @@ graph TD
     F --> SR[securityreport.md]
 
 3. Architectural Overview
+
 flowchart TD
 
 A[SecureMultiSig] -->|External Calls| B[Reentrancy Guard]
@@ -97,45 +99,48 @@ F --> FC[Invariant Enforcement]
 This table aggregates all divergences between the secure and vulnerable implementations across all three test suites.
 
 4.1 Governance-Level Divergences
-Governance Action	Vulnerable Behavior	Secure Behavior
-Add owner	Anyone can add themselves	Must follow propose → confirm → execute
-Remove owner	Anyone can remove owners	Owners only + confirmation threshold
-Change threshold	Arbitrary EOA can hijack threshold	Strict access + lifecycle invariants
-Proposal state after owner mutation	Becomes invalid / inconsistent	Locked, cannot be corrupted
-Governance mutation during active proposals	Allowed	Rejected
+Governance Action	                        Vulnerable Behavior	                Secure Behavior
+Add owner	                                Anyone can add themselves	        Must follow propose → confirm → execute
+Remove owner	                                Anyone can remove owners	        Owners only + confirmation threshold
+Change threshold	                        Arbitrary EOA can hijack threshold	Strict access + lifecycle invariants
+Proposal state after owner mutation	        Becomes invalid / inconsistent	        Locked, cannot be corrupted
+Governance mutation during active proposals	Allowed	                                Rejected
+
 4.2 Execution-Layer Divergences
-Runtime Scenario	Vulnerable	Secure
-Unchecked external calls	Silent failure, partial state commit	Atomic revert
-Gas exhaustion in batch	Partial progress, state corruption	Full revert, consistency preserved
-Reentrancy callback	Attack succeeds (duplicate events)	Blocked (nonReentrant + flags)
-Execution ordering	Non-deterministic	Deterministic, guarded
-Callback state access	Unsafe	Validated, sequenced
+Runtime Scenario	      Vulnerable	                        Secure
+Unchecked external calls      Silent failure, partial state commit	Atomic revert
+Gas exhaustion in batch	      Partial progress, state corruption	Full revert, consistency preserved
+Reentrancy callback	      Attack succeeds (duplicate events)	Blocked (nonReentrant + flags)
+Execution ordering	      Non-deterministic	                        Deterministic, guarded
+Callback state access	      Unsafe	                                Validated, sequenced
+
 4.3 Signature & Replay Divergences
-Validation Area	Vulnerable	Secure
-Domain separation	❌ No	✔️ Strict EIP-712
-Chain ID binding	❌ None	✔️ Enforced
-Contract binding	❌ None	✔️ verifiedContract
+Validation Area	        Vulnerable	Secure
+Domain separation	❌ No	        ✔️ Strict EIP-712
+Chain ID binding	❌ None	        ✔️ Enforced
+Contract binding	❌ None	        ✔️ verifiedContract
 Replay protection	❌ No nonces	✔️ Per-owner nonce
 Overflow behavior	❌ Silent	✔️ Reverts
 Mutated calldata	Executes	Reverts
 Forged signatures	Accepted	Rejected
 Mismatched struct	Accepted	Rejected
+
 5. Cryptographic Guarantees (Secure Wallet)
 ✔ EIP-712 with full domain separation
 
-name, version, chainId, verifyingContract, salt
+. name, version, chainId, verifyingContract, salt
 
 ✔ Struct hashing with strict type signatures
 
-Prevents preimage collision attacks
+. Prevents preimage collision attacks
 
-Prevents calldata mutation acceptance
+. Prevents calldata mutation acceptance
 
 ✔ Per-owner nonce
 
-Makes each signature single-use
+. Makes each signature single-use
 
-Eliminates replay
+. Eliminates replay
 
 ✔ Deterministic digest
 keccak256(
@@ -146,30 +151,27 @@ keccak256(
 
 6. Execution-Layer Guarantees
 
-Reentrancy guarded:
+. Reentrancy guarded:
 
-modifier nonReentrant { ... }
+. Execution flags: prevent nested calls
 
+. Atomic batch execution
 
-Execution flags: prevent nested calls
+. MAX_BATCH enforcement
 
-Atomic batch execution
-
-MAX_BATCH enforcement
-
-Strict return-value validation
+. Strict return-value validation
 
 7. Governance-Layer Guarantees
 
-Only owners can propose governance changes
+. Only owners can propose governance changes
 
-Threshold modifications require confirmations
+. Threshold modifications require confirmations
 
-Ownership cannot be hijacked
+. Ownership cannot be hijacked
 
-Proposal state cannot be desynchronized
+. Proposal state cannot be desynchronized
 
-All governance mutations follow:
+. All governance mutations follow:
 propose → confirm → execute
 
 8. Security Conclusions
@@ -177,23 +179,24 @@ The SecureMultiSig contract is robust across all attack layers.
 
 It successfully defends against:
 
-Governance hijacking
+. Governance hijacking
 
-Reentrancy
+. Reentrancy
 
-Calldata mutation
+. Calldata mutation
 
-Hash collisions
+. Hash collisions
 
-Signature forgeries
+. Signature forgeries
 
-Replay attacks
+. Replay attacks
 
-Gas-exhaustion partial commits
+. Gas-exhaustion partial commits
 
-Malicious external contract callbacks
+. Malicious external contract callbacks
 
 Meanwhile, the VulnerableMultiSig fails every tested dimension, proving the correctness and necessity of the hardened design.
+
 9. Test Documentation Links
 
 Each test suite contains its own detailed documentation in /docs:
